@@ -1,4 +1,4 @@
-import { GrokClient, GrokMessage, GrokToolCall } from "../giga/client";
+import { GigaClient, GrokMessage, GrokToolCall } from "../giga/client";
 import { GROK_TOOLS, getAllTools } from "../giga/tools";
 import { TextEditorTool, BashTool, TodoTool, ConfirmationTool, McpTool } from "../tools";
 import { ToolResult } from "../types";
@@ -28,7 +28,7 @@ export interface StreamingChunk {
 }
 
 export class GigaAgent extends EventEmitter {
-  private grokClient: GrokClient;
+  private gigaClient: GigaClient;
   private textEditor: TextEditorTool;
   private bash: BashTool;
   private todoTool: TodoTool;
@@ -58,7 +58,7 @@ export class GigaAgent extends EventEmitter {
       throw new Error('XAI API key is required. Please configure it in /providers or set XAI_API_KEY environment variable.');
     }
     
-    this.grokClient = new GrokClient(
+    this.gigaClient = new GigaClient(
       xaiKey,
       undefined,
       groqKey,
@@ -176,7 +176,7 @@ Current working directory: ${process.cwd()}`,
     let toolRounds = 0;
 
     try {
-      let currentResponse = await this.grokClient.chat(
+      let currentResponse = await this.gigaClient.chat(
         this.messages,
         getAllTools()
       );
@@ -240,7 +240,7 @@ Current working directory: ${process.cwd()}`,
           }
 
           // Get next response - this might contain more tool calls
-          currentResponse = await this.grokClient.chat(
+          currentResponse = await this.gigaClient.chat(
             this.messages,
             getAllTools()
           );
@@ -358,7 +358,7 @@ Current working directory: ${process.cwd()}`,
         }
 
         // Stream response and accumulate
-        const stream = this.grokClient.chatStream(this.messages, getAllTools());
+        const stream = this.gigaClient.chatStream(this.messages, getAllTools());
         let accumulatedMessage: any = {};
         let accumulatedContent = "";
         let toolCallsYielded = false;
@@ -603,11 +603,11 @@ Current working directory: ${process.cwd()}`,
   }
 
   getCurrentModel(): string {
-    return this.grokClient.getCurrentModel();
+    return this.gigaClient.getCurrentModel();
   }
 
   setModel(model: string): void {
-    this.grokClient.setModel(model);
+    this.gigaClient.setModel(model);
     // Update token counter for new model
     this.tokenCounter.dispose();
     this.tokenCounter = createTokenCounter(model);

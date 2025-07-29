@@ -3,6 +3,7 @@
 ## Meta-Features
 > features beyond the obvious
 - **Provider Support**: OpenRouter, xAI, Anthropic, OpenAI, Google Gemini, Groq, Cerebras
+- **OpenRouter Router**: Use the `order` feature in OR to specify which compute provider each of your added models use
 - **Fuzzy Finding**: Nice kick to `/` commands with fuzzy finding so you can bounce around the CLI fast
 - **Custom Prompts** Custom prompts to accelerate your coding workflow
 - **All-in-one**: All features and command accessible from inside the CLI, no weird setup terminal commands to bug you with.

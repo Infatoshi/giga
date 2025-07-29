@@ -43,7 +43,7 @@ interface APIConfig {
   apiKey: string;
 }
 
-export class GrokClient {
+export class GigaClient {
   private xaiClient: OpenAI;
   private groqClient: OpenAI;
   private anthropicClient: OpenAI;
