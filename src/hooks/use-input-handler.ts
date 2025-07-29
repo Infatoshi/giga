@@ -1,0 +1,974 @@
+import { useState, useRef, useEffect } from "react";
+import { useInput, useApp } from "ink";
+import { GigaAgent, ChatEntry } from "../agent/giga-agent";
+import { ConfirmationService } from "../utils/confirmation-service";
+import { loadAddedModels } from "../utils/added-models";
+import { loadAddedMcpServers, AddedMcpServer } from "../utils/added-mcp-servers";
+import { fuzzySearch } from "../utils/fuzzy-search";
+import { getInstanceAvailableModels, onModelSelected } from "../utils/instance-models";
+import { OpenRouterProvider, isOpenRouterModel } from "../utils/openrouter-providers";
+import { setOpenRouterProvider, getOpenRouterProvider } from "../utils/added-models";
+
+// Helper function to get OpenRouter models consistently
+const getOpenRouterModels = (models: ModelOption[]): ModelOption[] => {
+  return models.filter(model => model.description.includes('(OpenRouter)'));
+};
+
+interface UseInputHandlerProps {
+  agent: GigaAgent;
+  chatHistory: ChatEntry[];
+  setChatHistory: React.Dispatch<React.SetStateAction<ChatEntry[]>>;
+  setIsProcessing: (processing: boolean) => void;
+  setIsStreaming: (streaming: boolean) => void;
+  setTokenCount: (count: number) => void;
+  setProcessingTime: (time: number) => void;
+  processingStartTime: React.MutableRefObject<number>;
+  isProcessing: boolean;
+  isStreaming: boolean;
+  isConfirmationActive?: boolean;
+}
+
+interface CommandSuggestion {
+  command: string;
+  description: string;
+}
+
+interface ModelOption {
+  model: string;
+  description: string;
+}
+
+interface Provider {
+  name: string;
+  keyName: string;
+  description: string;
+}
+
+export function useInputHandler({
+  agent,
+  chatHistory,
+  setChatHistory,
+  setIsProcessing,
+  setIsStreaming,
+  setTokenCount,
+  setProcessingTime,
+  processingStartTime,
+  isProcessing,
+  isStreaming,
+  isConfirmationActive = false,
+}: UseInputHandlerProps) {
+  const [input, setInput] = useState("");
+  const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const [showModelSelection, setShowModelSelection] = useState(false);
+  const [selectedModelIndex, setSelectedModelIndex] = useState(0);
+  const [showProviderSettings, setShowProviderSettings] = useState(false);
+  const [selectedProviderIndex, setSelectedProviderIndex] = useState(0);
+  const [showAddModel, setShowAddModel] = useState(false);
+  const [showDeleteModel, setShowDeleteModel] = useState(false);
+  const [showPromptsList, setShowPromptsList] = useState(false);
+  const [showAddPrompt, setShowAddPrompt] = useState(false);
+  const [showDeletePrompt, setShowDeletePrompt] = useState(false);
+  const [showMcpServers, setShowMcpServers] = useState(false);
+  const [showAddMcpServer, setShowAddMcpServer] = useState(false);
+  const [showDeleteMcpServer, setShowDeleteMcpServer] = useState(false);
+  const [selectedMcpServerIndex, setSelectedMcpServerIndex] = useState(0);
+  const [dynamicModels, setDynamicModels] = useState<ModelOption[]>([]);
+  const [mcpServers, setMcpServers] = useState<AddedMcpServer[]>([]);
+  
+  // Route selection state
+  const [showRouteSelection, setShowRouteSelection] = useState(false);
+  const [routeViewMode, setRouteViewMode] = useState<'models' | 'providers'>('models');
+  const [selectedRouteModelIndex, setSelectedRouteModelIndex] = useState(0);
+  const [selectedRouteProviderIndex, setSelectedRouteProviderIndex] = useState(0);
+  const [currentSelectedModel, setCurrentSelectedModel] = useState<string>('');
+  const [routeProviders, setRouteProviders] = useState<OpenRouterProvider[]>([]);
+  const [isLoadingProviders, setIsLoadingProviders] = useState(false);
+  
+  // Command history state
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [temporaryInput, setTemporaryInput] = useState("");
+
+  // Helper function to add command to history
+  const addToHistory = (command: string) => {
+    if (command.trim() && command !== commandHistory[commandHistory.length - 1]) {
+      setCommandHistory(prev => [...prev, command.trim()]);
+    }
+    setHistoryIndex(-1);
+    setTemporaryInput("");
+  };
+
+  const closeProviderSettings = () => {
+    setShowProviderSettings(false);
+    setSelectedProviderIndex(0);
+  };
+
+  const closeAddModel = () => {
+    setShowAddModel(false);
+  };
+
+  const closeDeleteModel = () => {
+    setShowDeleteModel(false);
+  };
+
+  const closePromptsList = () => {
+    setShowPromptsList(false);
+  };
+
+  const closeAddPrompt = () => {
+    setShowAddPrompt(false);
+  };
+
+  const closeDeletePrompt = () => {
+    setShowDeletePrompt(false);
+  };
+
+  const closeMcpServers = () => {
+    setShowMcpServers(false);
+    setSelectedMcpServerIndex(0);
+  };
+
+  const closeAddMcpServer = () => {
+    setShowAddMcpServer(false);
+  };
+
+  const closeDeleteMcpServer = () => {
+    setShowDeleteMcpServer(false);
+  };
+
+  const closeRouteSelection = () => {
+    setShowRouteSelection(false);
+    setRouteViewMode('models');
+    setSelectedRouteModelIndex(0);
+    setSelectedRouteProviderIndex(0);
+    setCurrentSelectedModel('');
+    setRouteProviders([]);
+    setIsLoadingProviders(false);
+  };
+
+  const refreshModels = () => {
+    const instanceModels = getInstanceAvailableModels();
+    const modelOptions: ModelOption[] = instanceModels.map(model => ({
+      model: model.model,
+      description: `${model.description}${model.isFavorite ? ' ⭐' : ''}${model.isRecentlyUsed ? ' 🕒' : ''}`
+    }));
+    
+    setDynamicModels(modelOptions);
+  };
+
+  const refreshMcpServers = () => {
+    const addedServers = loadAddedMcpServers();
+    setMcpServers(addedServers);
+  };
+
+  // Helper function to get current filtered suggestions based on input
+  const getFilteredSuggestions = (currentInput: string): CommandSuggestion[] => {
+    return currentInput.startsWith("/")
+      ? fuzzySearch(
+          currentInput.substring(1), // Remove the "/" for fuzzy matching
+          commandSuggestions.filter(s => s.command.startsWith("/")),
+          (suggestion) => suggestion.command.substring(1), // Remove "/" for matching
+          8
+        )
+      : fuzzySearch(
+          currentInput,
+          commandSuggestions,
+          (suggestion) => suggestion.command,
+          8
+        );
+  };
+
+  useEffect(() => {
+    refreshModels();
+    refreshMcpServers();
+  }, []);
+
+  const { exit } = useApp();
+
+  const commandSuggestions: CommandSuggestion[] = [
+    { command: "/help", description: "Show help information" },
+    { command: "/clear", description: "Clear chat history" },
+    { command: "/models", description: "Switch Grok Model" },
+    { command: "/route", description: "Configure model provider routing" },
+    { command: "/add-model", description: "Add models from providers" },
+    { command: "/delete-model", description: "Delete added models" },
+    { command: "/prompts", description: "View custom prompts" },
+    { command: "/add-prompt", description: "Add custom prompt" },
+    { command: "/delete-prompt", description: "Delete custom prompt" },
+    { command: "/mcps", description: "View MCP servers" },
+    { command: "/add-mcp", description: "Add MCP server" },
+    { command: "/delete-mcp", description: "Delete MCP server" },
+    { command: "/providers", description: "Configure API Keys" },
+    { command: "/exit", description: "Exit the application" },
+  ];
+
+  const availableModels: ModelOption[] = [];
+
+  const providerList: Provider[] = [
+    { name: "OpenRouter", keyName: "openRouterApiKey", description: "OpenRouter API (Multi-model access)" },
+    { name: "Anthropic", keyName: "anthropicApiKey", description: "Claude models" },
+    { name: "Google", keyName: "googleApiKey", description: "Gemini models" },
+    { name: "xAI", keyName: "xaiApiKey", description: "Grok models" },
+    { name: "Groq", keyName: "groqApiKey", description: "Fast inference" },
+    { name: "Cerebras", keyName: "cerebrasApiKey", description: "Cerebras models" },
+    { name: "Perplexity", keyName: "perplexityApiKey", description: "Perplexity models" },
+    { name: "OpenAI", keyName: "openaiApiKey", description: "GPT models" },
+  ];
+
+  const handleDirectCommand = async (input: string): Promise<boolean> => {
+    const trimmedInput = input.trim();
+
+    if (trimmedInput === "/clear") {
+      // Reset chat history
+      setChatHistory([]);
+      
+      // Reset processing states
+      setIsProcessing(false);
+      setIsStreaming(false);
+      setTokenCount(0);
+      setProcessingTime(0);
+      processingStartTime.current = 0;
+      
+      // Reset confirmation service session flags
+      const confirmationService = ConfirmationService.getInstance();
+      confirmationService.resetSession();
+      
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/help") {
+      const helpEntry: ChatEntry = {
+        type: "assistant",
+        content: `GIGA Help:
+
+Built-in Commands:
+  /clear        - Clear chat history
+  /help         - Show this help
+  /models       - Switch models
+  /route        - Configure model provider routing
+  /add-model    - Add models from providers
+  /delete-model - Delete added models
+  /prompts      - View custom prompts
+  /add-prompt   - Add custom prompt
+  /delete-prompt- Delete custom prompt
+  /mcps         - View MCP servers
+  /add-mcp      - Add MCP server
+  /delete-mcp   - Delete MCP server
+  /providers    - Configure API keys
+  /exit         - Exit application
+  exit, quit    - Exit application
+
+Direct Commands (executed immediately):
+  ls [path]   - List directory contents
+  pwd         - Show current directory  
+  cd <path>   - Change directory
+  cat <file>  - View file contents
+  mkdir <dir> - Create directory
+  touch <file>- Create empty file
+
+For complex operations, just describe what you want in natural language.
+Examples:
+  "edit package.json and add a new script"
+  "create a new React component called Header"
+  "show me all TypeScript files in this project"`,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, helpEntry]);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/models") {
+      setShowModelSelection(true);
+      setSelectedModelIndex(0);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/providers") {
+      setShowProviderSettings(true);
+      setSelectedProviderIndex(0);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/add-model") {
+      setShowAddModel(true);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/delete-model") {
+      setShowDeleteModel(true);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/mcps") {
+      setShowMcpServers(true);
+      setSelectedMcpServerIndex(0);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/add-mcp") {
+      setShowAddMcpServer(true);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/delete-mcp") {
+      setShowDeleteMcpServer(true);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/prompts") {
+      setShowPromptsList(true);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/add-prompt") {
+      setShowAddPrompt(true);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/delete-prompt") {
+      setShowDeletePrompt(true);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/route") {
+      setShowRouteSelection(true);
+      setRouteViewMode('models');
+      setSelectedRouteModelIndex(0);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput.startsWith("/models ")) {
+      const modelArg = trimmedInput.split(" ")[1];
+      const modelNames = dynamicModels.map(m => m.model);
+
+      if (modelNames.includes(modelArg)) {
+        onModelSelected(modelArg);
+        agent.setModel(modelArg);
+        const confirmEntry: ChatEntry = {
+          type: "assistant",
+          content: `✓ Switched to model: ${modelArg}`,
+          timestamp: new Date(),
+        };
+        setChatHistory((prev) => [...prev, confirmEntry]);
+      } else {
+        const errorEntry: ChatEntry = {
+          type: "assistant",
+          content: `Invalid model: ${modelArg}
+
+Available models: ${modelNames.join(", ")}`,
+          timestamp: new Date(),
+        };
+        setChatHistory((prev) => [...prev, errorEntry]);
+      }
+
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    const directBashCommands = [
+      "ls", "pwd", "cd", "cat", "mkdir", "touch", "echo", "grep", "find", "cp", "mv", "rm",
+    ];
+    const firstWord = trimmedInput.split(" ")[0];
+
+    if (directBashCommands.includes(firstWord)) {
+      const userEntry: ChatEntry = {
+        type: "user",
+        content: trimmedInput,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, userEntry]);
+
+      try {
+        const result = await agent.executeBashCommand(trimmedInput);
+
+        const commandEntry: ChatEntry = {
+          type: "tool_result",
+          content: result.success
+            ? result.output || "Command completed"
+            : result.error || "Command failed",
+          timestamp: new Date(),
+          toolCall: {
+            id: `bash_${Date.now()}`,
+            type: "function",
+            function: {
+              name: "bash",
+              arguments: JSON.stringify({ command: trimmedInput }),
+            },
+          },
+          toolResult: result,
+        };
+        setChatHistory((prev) => [...prev, commandEntry]);
+      } catch (error: any) {
+        const errorEntry: ChatEntry = {
+          type: "assistant",
+          content: `Error executing command: ${error.message}`,
+          timestamp: new Date(),
+        };
+        setChatHistory((prev) => [...prev, errorEntry]);
+      }
+
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    return false;
+  };
+
+  const processUserMessage = async (userInput: string) => {
+    const userEntry: ChatEntry = {
+      type: "user",
+      content: userInput,
+      timestamp: new Date(),
+    };
+    setChatHistory((prev) => [...prev, userEntry]);
+    addToHistory(userInput);
+
+    setIsProcessing(true);
+    setInput("");
+
+    try {
+      setIsStreaming(true);
+      let streamingEntry: ChatEntry | null = null;
+
+      for await (const chunk of agent.processUserMessageStream(userInput)) {
+        switch (chunk.type) {
+          case "content":
+            if (chunk.content) {
+              if (!streamingEntry) {
+                const newStreamingEntry = {
+                  type: "assistant" as const,
+                  content: chunk.content,
+                  timestamp: new Date(),
+                  isStreaming: true,
+                };
+                setChatHistory((prev) => [...prev, newStreamingEntry]);
+                streamingEntry = newStreamingEntry;
+              } else {
+                setChatHistory((prev) =>
+                  prev.map((entry, idx) =>
+                    idx === prev.length - 1 && entry.isStreaming
+                      ? { ...entry, content: entry.content + chunk.content }
+                      : entry
+                  )
+                );
+              }
+            }
+            break;
+
+          case "token_count":
+            if (chunk.tokenCount !== undefined) {
+              setTokenCount(chunk.tokenCount);
+            }
+            break;
+
+          case "tool_calls":
+            if (chunk.toolCalls) {
+              // Stop streaming for the current assistant message
+              setChatHistory((prev) =>
+                prev.map((entry) =>
+                  entry.isStreaming ? { ...entry, isStreaming: false, toolCalls: chunk.toolCalls } : entry
+                )
+              );
+              streamingEntry = null;
+            }
+            break;
+
+          case "tool_result":
+            if (chunk.toolCall && chunk.toolResult) {
+              setChatHistory((prev) =>
+                prev.map((entry) =>
+                  entry.isStreaming ? { ...entry, isStreaming: false } : entry
+                )
+              );
+
+              const toolResultEntry: ChatEntry = {
+                type: "tool_result",
+                content: chunk.toolResult.success
+                  ? chunk.toolResult.output || "Success"
+                  : chunk.toolResult.error || "Error occurred",
+                timestamp: new Date(),
+                toolCall: chunk.toolCall,
+                toolResult: chunk.toolResult,
+              };
+              setChatHistory((prev) => [...prev, toolResultEntry]);
+              streamingEntry = null;
+            }
+            break;
+
+          case "done":
+            if (streamingEntry) {
+              setChatHistory((prev) =>
+                prev.map((entry) =>
+                  entry.isStreaming ? { ...entry, isStreaming: false } : entry
+                )
+              );
+            }
+            setIsStreaming(false);
+            break;
+        }
+      }
+    } catch (error: any) {
+      const errorEntry: ChatEntry = {
+        type: "assistant",
+        content: `Error: ${error.message}`,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, errorEntry]);
+      setIsStreaming(false);
+    }
+
+    setIsProcessing(false);
+    processingStartTime.current = 0;
+  };
+
+  const handleRouteSelectionInput = async (inputChar: string, key: any) => {
+    if (key.escape) {
+      if (routeViewMode === 'providers') {
+        // Go back to models view
+        setRouteViewMode('models');
+        setSelectedRouteProviderIndex(0);
+        setCurrentSelectedModel('');
+        setRouteProviders([]);
+        setIsLoadingProviders(false);
+      } else {
+        // Close route selection entirely
+        closeRouteSelection();
+      }
+      return;
+    }
+
+    if (routeViewMode === 'models') {
+      // Filter to only show OpenRouter models (same as the component filter)
+      const openRouterModels = getOpenRouterModels(dynamicModels);
+      
+      if (key.upArrow) {
+        setSelectedRouteModelIndex((prev) =>
+          prev === 0 ? openRouterModels.length - 1 : prev - 1
+        );
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedRouteModelIndex((prev) => (prev + 1) % openRouterModels.length);
+        return;
+      }
+      if (key.return || key.tab) {
+        const selectedModel = openRouterModels[selectedRouteModelIndex];
+        console.log(`DEBUG: Selected model index: ${selectedRouteModelIndex}, Model: ${selectedModel?.model}`);
+        if (selectedModel) {
+          // Move to provider selection
+          setCurrentSelectedModel(selectedModel.model);
+          setRouteViewMode('providers');
+          setSelectedRouteProviderIndex(0);
+          setIsLoadingProviders(true);
+          setRouteProviders([]);
+
+          try {
+            const { loadApiKeys } = await import('../utils/api-keys');
+            const { getModelProvidersWithFallback } = await import('../utils/openrouter-providers');
+            
+            const apiKeys = loadApiKeys();
+            const openRouterKey = apiKeys.openRouterApiKey;
+            
+            if (openRouterKey) {
+              const modelProviders = await getModelProvidersWithFallback(selectedModel.model, openRouterKey);
+              setRouteProviders(modelProviders);
+            } else {
+              // Show error message
+              const errorEntry: ChatEntry = {
+                type: "assistant",
+                content: "OpenRouter API key is required to fetch providers. Please configure it in /providers.",
+                timestamp: new Date(),
+              };
+              setChatHistory((prev) => [...prev, errorEntry]);
+              closeRouteSelection();
+            }
+          } catch (error) {
+            console.error('Error fetching providers:', error);
+            setRouteProviders([]);
+          } finally {
+            setIsLoadingProviders(false);
+          }
+        }
+        return;
+      }
+    } else if (routeViewMode === 'providers') {
+      if (key.upArrow) {
+        setSelectedRouteProviderIndex((prev) =>
+          prev === 0 ? routeProviders.length - 1 : prev - 1
+        );
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedRouteProviderIndex((prev) => (prev + 1) % routeProviders.length);
+        return;
+      }
+      if (key.return || key.tab) {
+        const selectedProvider = routeProviders[selectedRouteProviderIndex];
+        console.log(`DEBUG: Setting provider ${selectedProvider?.id} for model ${currentSelectedModel}`);
+        if (selectedProvider && currentSelectedModel) {
+          // Save OpenRouter provider preference to the global models file
+          const success = setOpenRouterProvider(currentSelectedModel, selectedProvider.id);
+          console.log(`DEBUG: setOpenRouterProvider result: ${success}`);
+          
+          if (success) {
+            // Show confirmation message
+            const confirmEntry: ChatEntry = {
+              type: "assistant",
+              content: `✓ Set OpenRouter provider for ${currentSelectedModel}: ${selectedProvider.name}`,
+              timestamp: new Date(),
+            };
+            setChatHistory((prev) => [...prev, confirmEntry]);
+          } else {
+            const errorEntry: ChatEntry = {
+              type: "assistant",
+              content: `❌ Failed to set provider for ${currentSelectedModel} - model not found in OpenRouter`,
+              timestamp: new Date(),
+            };
+            setChatHistory((prev) => [...prev, errorEntry]);
+          }
+
+          closeRouteSelection();
+        }
+        return;
+      }
+    }
+  };
+
+  useInput(async (inputChar: string, key: any) => {
+    // Don't handle input if confirmation dialog or prompt dialogs are active
+    if (isConfirmationActive || showAddPrompt || showDeletePrompt || showPromptsList || showRouteSelection) {
+      // Special handling for route selection
+      if (showRouteSelection) {
+        await handleRouteSelectionInput(inputChar, key);
+      }
+      return;
+    }
+    
+    if (key.ctrl && inputChar === "c") {
+      exit();
+      return;
+    }
+
+    if (key.escape) {
+      if (showCommandSuggestions) {
+        setShowCommandSuggestions(false);
+        setSelectedCommandIndex(0);
+        return;
+      }
+      if (showModelSelection) {
+        setShowModelSelection(false);
+        setSelectedModelIndex(0);
+        return;
+      }
+      if (showProviderSettings) {
+        setShowProviderSettings(false);
+        setSelectedProviderIndex(0);
+        return;
+      }
+      if (showAddModel) {
+        setShowAddModel(false);
+        return;
+      }
+      if (showDeleteModel) {
+        setShowDeleteModel(false);
+        return;
+      }
+      if (showPromptsList) {
+        setShowPromptsList(false);
+        return;
+      }
+      if (showAddPrompt) {
+        setShowAddPrompt(false);
+        return;
+      }
+      if (showDeletePrompt) {
+        setShowDeletePrompt(false);
+        return;
+      }
+      if (showMcpServers) {
+        setShowMcpServers(false);
+        setSelectedMcpServerIndex(0);
+        return;
+      }
+      if (showAddMcpServer) {
+        setShowAddMcpServer(false);
+        return;
+      }
+      if (showDeleteMcpServer) {
+        setShowDeleteMcpServer(false);
+        return;
+      }
+      if (isProcessing || isStreaming) {
+        agent.abortCurrentOperation();
+        setIsProcessing(false);
+        setIsStreaming(false);
+        setTokenCount(0);
+        setProcessingTime(0);
+        processingStartTime.current = 0;
+        return;
+      }
+    }
+
+    if (showCommandSuggestions) {
+      const filteredSuggestions = getFilteredSuggestions(input);
+      
+      if (key.upArrow) {
+        setSelectedCommandIndex((prev) =>
+          prev === 0 ? filteredSuggestions.length - 1 : prev - 1
+        );
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedCommandIndex((prev) => (prev + 1) % filteredSuggestions.length);
+        return;
+      }
+      if (key.tab || key.return) {
+        const selectedCommand = filteredSuggestions[selectedCommandIndex];
+        if (selectedCommand) {
+          setInput(selectedCommand.command + " ");
+          setShowCommandSuggestions(false);
+          setSelectedCommandIndex(0);
+        }
+        return;
+      }
+    }
+
+    if (showModelSelection) {
+      if (key.upArrow) {
+        setSelectedModelIndex((prev) =>
+          prev === 0 ? dynamicModels.length - 1 : prev - 1
+        );
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedModelIndex((prev) => (prev + 1) % dynamicModels.length);
+        return;
+      }
+      if (key.tab || key.return) {
+        const selectedModel = dynamicModels[selectedModelIndex];
+        onModelSelected(selectedModel.model);
+        agent.setModel(selectedModel.model);
+        const confirmEntry: ChatEntry = {
+          type: "assistant",
+          content: `✓ Switched to model: ${selectedModel.model}`,
+          timestamp: new Date(),
+        };
+        setChatHistory((prev) => [...prev, confirmEntry]);
+        setShowModelSelection(false);
+        setSelectedModelIndex(0);
+        return;
+      }
+    }
+
+    if (showMcpServers) {
+      if (key.upArrow) {
+        setSelectedMcpServerIndex((prev) =>
+          prev === 0 ? mcpServers.length - 1 : prev - 1
+        );
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedMcpServerIndex((prev) => (prev + 1) % mcpServers.length);
+        return;
+      }
+      if (key.tab || key.return) {
+        const selectedServer = mcpServers[selectedMcpServerIndex];
+        if (selectedServer) {
+          const serverInfo: ChatEntry = {
+            type: "assistant",
+            content: `MCP Server: ${selectedServer.name}
+Command: ${selectedServer.command}
+${selectedServer.args ? `Args: ${selectedServer.args.join(' ')}` : ''}
+${selectedServer.env ? `Environment: ${Object.entries(selectedServer.env).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}
+${selectedServer.description ? `Description: ${selectedServer.description}` : ''}
+Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
+            timestamp: new Date(),
+          };
+          setChatHistory((prev) => [...prev, serverInfo]);
+        }
+        setShowMcpServers(false);
+        setSelectedMcpServerIndex(0);
+        return;
+      }
+    }
+
+    if (showAddModel || showDeleteModel || showAddMcpServer || showDeleteMcpServer) {
+      return;
+    }
+
+    if (showProviderSettings) {
+      return;
+    }
+
+    // Handle command history navigation with up/down arrows
+    if (key.upArrow && !showCommandSuggestions && !showModelSelection && !showMcpServers) {
+      if (commandHistory.length > 0) {
+        if (historyIndex === -1) {
+          // Store current input before navigating history
+          setTemporaryInput(input);
+          setHistoryIndex(commandHistory.length - 1);
+          setInput(commandHistory[commandHistory.length - 1]);
+        } else if (historyIndex > 0) {
+          setHistoryIndex(historyIndex - 1);
+          setInput(commandHistory[historyIndex - 1]);
+        }
+      }
+      return;
+    }
+
+    if (key.downArrow && !showCommandSuggestions && !showModelSelection && !showMcpServers) {
+      if (commandHistory.length > 0 && historyIndex !== -1) {
+        if (historyIndex < commandHistory.length - 1) {
+          setHistoryIndex(historyIndex + 1);
+          setInput(commandHistory[historyIndex + 1]);
+        } else {
+          // Return to original input
+          setHistoryIndex(-1);
+          setInput(temporaryInput);
+        }
+      }
+      return;
+    }
+
+    if (key.return) {
+      const userInput = input.trim();
+      if (userInput === "exit" || userInput === "quit") {
+        exit();
+        return;
+      }
+
+      if (userInput) {
+        const directCommandResult = await handleDirectCommand(userInput);
+        if (!directCommandResult) {
+          await processUserMessage(userInput);
+        }
+      }
+      return;
+    }
+
+    if (key.backspace || key.delete) {
+      const newInput = input.slice(0, -1);
+      setInput(newInput);
+      
+      // Reset history navigation when user edits input
+      if (historyIndex !== -1) {
+        setHistoryIndex(-1);
+        setTemporaryInput("");
+      }
+
+      if (!newInput.startsWith("/")) {
+        setShowCommandSuggestions(false);
+        setSelectedCommandIndex(0);
+      } else if (showCommandSuggestions) {
+        // Reset selected index when input changes to avoid out-of-bounds
+        setSelectedCommandIndex(0);
+      }
+      return;
+    }
+
+    if (inputChar && !key.ctrl && !key.meta) {
+      const newInput = input + inputChar;
+      setInput(newInput);
+      
+      // Reset history navigation when user types new input
+      if (historyIndex !== -1) {
+        setHistoryIndex(-1);
+        setTemporaryInput("");
+      }
+
+      if (
+        newInput === "/" ||
+        ["ls", "pwd", "cd", "cat", "mkdir", "touch"].some((cmd) =>
+          cmd.startsWith(newInput)
+        )
+      ) {
+        setShowCommandSuggestions(true);
+        setSelectedCommandIndex(0);
+      } else if (
+        !newInput.startsWith("/") &&
+        !["ls", "pwd", "cd", "cat", "mkdir", "touch"].some((cmd) =>
+          cmd.startsWith(newInput)
+        )
+      ) {
+        setShowCommandSuggestions(false);
+        setSelectedCommandIndex(0);
+      } else if (showCommandSuggestions) {
+        // Reset selected index when input changes to avoid out-of-bounds
+        setSelectedCommandIndex(0);
+      }
+    }
+  });
+
+  return {
+    input,
+    showCommandSuggestions,
+    selectedCommandIndex,
+    showModelSelection,
+    selectedModelIndex,
+    showProviderSettings,
+    selectedProviderIndex,
+    showAddModel,
+    showDeleteModel,
+    showPromptsList,
+    showAddPrompt,
+    showDeletePrompt,
+    showMcpServers,
+    showAddMcpServer,
+    showDeleteMcpServer,
+    selectedMcpServerIndex,
+    showRouteSelection,
+    routeViewMode,
+    selectedRouteModelIndex,
+    selectedRouteProviderIndex,
+    currentSelectedModel,
+    routeProviders,
+    isLoadingProviders,
+    commandSuggestions,
+    availableModels: dynamicModels,
+    mcpServers,
+    providerList,
+    closeProviderSettings,
+    closeAddModel,
+    closeDeleteModel,
+    closePromptsList,
+    closeAddPrompt,
+    closeDeletePrompt,
+    closeMcpServers,
+    closeAddMcpServer,
+    closeDeleteMcpServer,
+    closeRouteSelection,
+    refreshModels,
+    refreshMcpServers,
+    openRouterModels: getOpenRouterModels(dynamicModels),
+    agent,
+  };
+}
