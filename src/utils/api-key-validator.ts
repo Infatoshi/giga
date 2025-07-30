@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import Cerebras from '@cerebras/cerebras_cloud_sdk';
 
 export interface ApiKeyValidationResult {
   isValid: boolean;
@@ -86,15 +87,24 @@ export async function validateGroqKey(apiKey: string): Promise<ApiKeyValidationR
 }
 
 // Validate Cerebras API key
-export async function validateCerebrasKey(apiKey: string): Promise<ApiKeyValidationResult> {
+export async function validateCerebrasKey(apiKey: string, model?: string): Promise<ApiKeyValidationResult> {
   try {
-    const client = new OpenAI({
+    const client = new Cerebras({
       apiKey,
-      baseURL: 'https://api.cerebras.ai/v1',
       timeout: 10000,
     });
     
-    await client.models.list();
+    // Use the provided model or default to qwen-3-235b-a22b-instruct-2507 for validation
+    const validationModel = model || 'qwen-3-235b-a22b-instruct-2507';
+    
+    // Try a simple chat completion request instead of listing models
+    const response = await client.chat.completions.create({
+      model: validationModel,
+      messages: [{ role: 'user', content: 'test' }],
+      max_completion_tokens: 1,
+      temperature: 0.1,
+    });
+    
     return { isValid: true };
   } catch (error: any) {
     return { isValid: false, error: error?.message || "API validation failed" };
@@ -145,7 +155,7 @@ export async function validateOpenaiKey(apiKey: string): Promise<ApiKeyValidatio
 }
 
 // Main validation function that routes to the correct provider
-export async function validateApiKey(provider: string, apiKey: string): Promise<ApiKeyValidationResult> {
+export async function validateApiKey(provider: string, apiKey: string, model?: string): Promise<ApiKeyValidationResult> {
   if (!apiKey || !apiKey.trim()) {
     return { isValid: false, error: 'API key is empty' };
   }
@@ -162,7 +172,7 @@ export async function validateApiKey(provider: string, apiKey: string): Promise<
     case 'groq':
       return validateGroqKey(apiKey);
     case 'cerebras':
-      return validateCerebrasKey(apiKey);
+      return validateCerebrasKey(apiKey, model);
     case 'perplexity':
       return validatePerplexityKey(apiKey);
     case 'openai':

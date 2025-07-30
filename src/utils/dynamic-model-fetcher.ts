@@ -201,7 +201,8 @@ export async function fetchProviderModels(provider: ProviderName, apiKey: string
       case 'groq':
         return await fetchGroqModels(apiKey);
       case 'cerebras':
-        return await fetchCerebrasModels(apiKey);
+        // Cerebras uses static models since API doesn't return correct model names
+        return { success: true, models: PROVIDER_MODELS.cerebras };
       case 'perplexity':
         return await fetchPerplexityModels(apiKey);
       case 'openai':

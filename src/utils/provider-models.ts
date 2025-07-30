@@ -115,7 +115,7 @@ export const PROVIDER_MODELS = {
     "llama-3.3-70b",
     "llama-4-scout-17b-16e-instruct",
     "qwen-3-32b",
-    "qwen-3-235b-a22b",
+    "qwen-3-235b-a22b-instruct-2507",
     "qwen2.5-7b-instruct",
     "qwen2.5-14b-instruct",
     "qwen2.5-32b-instruct",

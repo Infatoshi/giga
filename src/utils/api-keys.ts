@@ -115,9 +115,32 @@ function saveShellKeysToSettings(shellKeys: ApiKeys): void {
     // Save settings file if there were changes
     if (hasChanges) {
       fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+      // Refresh global shared info after changes
+      try {
+        const now = new Date();
+        fs.utimesSync(settingsFile, now, now);
+      } catch (refreshError) {
+        // Silently ignore refresh errors
+      }
     }
   } catch (error) {
     // Silently ignore errors to avoid disrupting the application
+  }
+}
+
+export function refreshGlobalSharedInfo(): void {
+  try {
+    const homeDir = os.homedir();
+    const settingsFile = path.join(homeDir, '.giga', 'user-settings.json');
+    
+    // If user-settings.json exists, refresh global shared info
+    if (fs.existsSync(settingsFile)) {
+      // Trigger refresh by updating modification time
+      const now = new Date();
+      fs.utimesSync(settingsFile, now, now);
+    }
+  } catch (error) {
+    // Silently ignore errors
   }
 }
 

@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat';
+import Cerebras from '@cerebras/cerebras_cloud_sdk';
 import { sessionManager } from '../utils/session-manager';
 import { getOpenRouterProvider } from '../utils/added-models';
 
@@ -49,7 +50,7 @@ export class GigaClient {
   private anthropicClient: OpenAI;
   private openRouterClient: OpenAI;
   private googleClient: OpenAI;
-  private cerebrasClient: OpenAI;
+  private cerebrasClient: Cerebras;
   private perplexityClient: OpenAI;
   private openaiClient: OpenAI;
   // Remove instance-level currentModel - now managed by sessionManager
@@ -116,9 +117,8 @@ export class GigaClient {
     
     this.cerebrasApiKey = cerebrasApiKey;
     if (cerebrasApiKey) {
-      this.cerebrasClient = new OpenAI({
+      this.cerebrasClient = new Cerebras({
         apiKey: cerebrasApiKey,
-        baseURL: 'https://api.cerebras.ai/v1',
         timeout: 360000,
       });
     }
@@ -146,7 +146,7 @@ export class GigaClient {
     }
   }
 
-  private getClientForModel(model: string): OpenAI {
+  private getClientForModel(model: string): OpenAI | Cerebras {
     // OpenRouter models (access to multiple providers through one API)
     const openRouterModels = [
       'qwen/qwen3-235b-a22b-07-25',
@@ -201,7 +201,7 @@ export class GigaClient {
       'llama-4-scout-17b-16e-instruct',
       'llama-3.3-70b',
       'qwen-3-32b',
-      'qwen-3-235b-a22b'
+      'qwen-3-235b-a22b-instruct-2507'
     ];
     
     // Perplexity models
@@ -280,7 +280,24 @@ export class GigaClient {
       const targetModel = model || sessionManager.getCurrentModel();
       const client = this.getClientForModel(targetModel);
       
-      // Check for OpenRouter provider preference and prepare request body
+      // Check if this is a Cerebras client
+      if (client === this.cerebrasClient) {
+        const requestBody: any = {
+          model: targetModel,
+          messages,
+          temperature: 0.7,
+          max_completion_tokens: 4000,
+          top_p: 0.95,
+        };
+        
+        console.log(`DEBUG: Using Cerebras model: ${targetModel}`);
+        console.log(`DEBUG: Cerebras API Key present: ${this.cerebrasApiKey ? 'Yes' : 'No'}`);
+        
+        const response = await client.chat.completions.create(requestBody);
+        return response as GrokResponse;
+      }
+      
+      // Handle OpenAI-compatible clients
       const openRouterProvider = getOpenRouterProvider(targetModel);
       const requestBody: any = {
         model: targetModel,
@@ -311,7 +328,7 @@ export class GigaClient {
         provider: requestBody.provider,
       });
       
-      const response = await client.chat.completions.create(requestBody);
+      const response = await (client as OpenAI).chat.completions.create(requestBody);
 
       return response as GrokResponse;
     } catch (error: any) {
@@ -329,7 +346,28 @@ export class GigaClient {
       const targetModel = model || sessionManager.getCurrentModel();
       const client = this.getClientForModel(targetModel);
       
-      // Check for OpenRouter provider preference and prepare request body
+      // Check if this is a Cerebras client
+      if (client === this.cerebrasClient) {
+        const requestBody: any = {
+          model: targetModel,
+          messages,
+          temperature: 0.7,
+          max_completion_tokens: 4000,
+          top_p: 0.95,
+          stream: true,
+        };
+        
+        console.log(`DEBUG: Streaming with Cerebras model: ${targetModel}`);
+        
+        const stream = await client.chat.completions.create(requestBody) as any;
+
+        for await (const chunk of stream) {
+          yield chunk;
+        }
+        return;
+      }
+      
+      // Handle OpenAI-compatible clients
       const openRouterProvider = getOpenRouterProvider(targetModel);
       const requestBody: any = {
         model: targetModel,
@@ -351,7 +389,7 @@ export class GigaClient {
         console.log(`DEBUG: Streaming with preferred OpenRouter provider: ${openRouterProvider} for model: ${targetModel}`);
       }
       
-      const stream = await client.chat.completions.create(requestBody) as any;
+      const stream = await (client as OpenAI).chat.completions.create(requestBody) as any;
 
       for await (const chunk of stream) {
         yield chunk;

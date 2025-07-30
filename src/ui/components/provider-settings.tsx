@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { validateApiKey } from "../../utils/api-key-validator";
+import { refreshGlobalSharedInfo } from "../../utils/api-keys";
 
 interface Provider {
   name: string;
@@ -146,6 +147,9 @@ export default function ProviderSettings({ providers, selectedIndex: initialSele
       });
       
       fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2), { mode: 0o600 });
+      
+      // Refresh global shared info after API key changes
+      refreshGlobalSharedInfo();
       
       onClose();
     } catch (error) {
