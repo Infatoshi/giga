@@ -12,7 +12,7 @@
 
 ## Installation
 ```bash
-npm i -g giga-code@0.0.7
+npm i -g giga-code
 ```
 
 ## Prerequisites
