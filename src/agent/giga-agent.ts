@@ -1,12 +1,16 @@
 import { GigaClient, GrokMessage, GrokToolCall } from "../giga/client";
 import { GROK_TOOLS, getAllTools } from "../giga/tools";
-import { TextEditorTool, BashTool, TodoTool, ConfirmationTool, McpTool } from "../tools";
+import { TextEditorTool, BashTool, TodoTool, ConfirmationTool, McpTool, PerplexityTool } from "../tools";
 import { ToolResult } from "../types";
 import { EventEmitter } from "events";
 import { createTokenCounter, TokenCounter } from "../utils/token-counter";
 import { loadCustomInstructions } from "../utils/custom-instructions";
 import { loadApiKeys } from "../utils/api-keys";
 import { McpManager } from "../mcp/mcp-manager";
+import { sessionManager } from "../utils/session-manager";
+import { expertModelsManager, ExpertModelsConfig } from "../utils/expert-models-manager";
+import { modeManager } from "../utils/mode-manager";
+import { AgentMode } from "../types";
 
 export interface ChatEntry {
   type: "user" | "assistant" | "tool_result";
@@ -14,8 +18,14 @@ export interface ChatEntry {
   timestamp: Date;
   toolCalls?: GrokToolCall[];
   toolCall?: GrokToolCall;
-  toolResult?: { success: boolean; output?: string; error?: string };
+  toolResult?: { success: boolean; output?: string; error?: string; metadata?: { userSummary?: string; query?: string; [key: string]: any; } };
   isStreaming?: boolean;
+  metrics?: {
+    prefillTimeMs: number;
+    decodeTimeMs: number;
+    outputTokens: number;
+    tokensPerSecond: number;
+  };
 }
 
 export interface StreamingChunk {
@@ -34,11 +44,14 @@ export class GigaAgent extends EventEmitter {
   private todoTool: TodoTool;
   private confirmationTool: ConfirmationTool;
   private mcpTool: McpTool;
+  private perplexityTool: PerplexityTool;
   private mcpManager: McpManager;
   private chatHistory: ChatEntry[] = [];
   private messages: GrokMessage[] = [];
   private tokenCounter: TokenCounter;
   private abortController: AbortController | null = null;
+  private selectedCustomPrompt: string | null = null;
+  private baseSystemPrompt: string;
 
   constructor(apiKey: string, groqApiKey?: string) {
     super();
@@ -67,35 +80,33 @@ export class GigaAgent extends EventEmitter {
       googleKey,
       cerebrasKey,
       perplexityKey,
-      openaiKey
+      openaiKey,
+      savedKeys.ollamaBaseUrl
     );
     this.textEditor = new TextEditorTool();
     this.bash = new BashTool();
     this.todoTool = new TodoTool();
     this.confirmationTool = new ConfirmationTool();
     this.mcpTool = new McpTool();
+    this.perplexityTool = new PerplexityTool();
     this.mcpManager = McpManager.getInstance();
     this.tokenCounter = createTokenCounter("grok-4-latest");
 
     // Initialize MCP connections
     this.initializeMcpConnections();
 
-    // Load custom instructions
-    const customInstructions = loadCustomInstructions();
-    const customInstructionsSection = customInstructions
-      ? `\n\nCUSTOM INSTRUCTIONS:\n${customInstructions}\n\nThe above custom instructions should be followed alongside the standard instructions below.`
-      : "";
+    // Attempt to migrate expert models config from sessions if needed
+    expertModelsManager.migrateFromAllSessions();
 
-    // Initialize with system message
-    this.messages.push({
-      role: "system",
-      content: `You are GIGA, an AI assistant that helps with file editing, coding tasks, and system operations.${customInstructionsSection}
+    // Store base system prompt
+    this.baseSystemPrompt = `You are GIGA, an AI assistant that helps with file editing, coding tasks, and system operations.
 
 You have access to these tools:
 - view_file: View file contents or directory listings
 - create_file: Create new files with content (ONLY use this for files that don't exist yet)
 - str_replace_editor: Replace text in existing files (ALWAYS use this to edit or update existing files)
 - bash: Execute bash commands (use for searching, file discovery, navigation, and system operations)
+- perplexity_search: Search the web for current information, documentation, and research using Perplexity
 - create_todo_list: Create a visual todo list for planning and tracking tasks
 - update_todo_list: Update existing todos in your todo list
 
@@ -141,8 +152,10 @@ IMPORTANT RESPONSE GUIDELINES:
 - Keep responses concise and focused on the actual work being done
 - If a tool execution completes the user's request, you can remain silent or give a brief confirmation
 
-Current working directory: ${process.cwd()}`,
-    });
+Current working directory: ${process.cwd()}`;
+
+    // Initialize with system message
+    this.updateSystemPrompt();
   }
 
   private async initializeMcpConnections(): Promise<void> {
@@ -176,6 +189,7 @@ Current working directory: ${process.cwd()}`,
     let toolRounds = 0;
 
     try {
+      // For initial response, always use the main model - expert routing happens at tool level
       let currentResponse = await this.gigaClient.chat(
         this.messages,
         getAllTools()
@@ -216,6 +230,12 @@ Current working directory: ${process.cwd()}`,
           // Execute tool calls
           for (const toolCall of assistantMessage.tool_calls) {
             const result = await this.executeTool(toolCall);
+            
+            // Log expert model usage for debugging
+            const expertModel = this.getExpertModelForTool(toolCall.function.name);
+            if (expertModel) {
+              console.log(`DEBUG: Used expert model ${expertModel} for tool ${toolCall.function.name}`);
+            }
 
             const toolResultEntry: ChatEntry = {
               type: "tool_result",
@@ -240,6 +260,7 @@ Current working directory: ${process.cwd()}`,
           }
 
           // Get next response - this might contain more tool calls
+          // Use the main model for coordinating between tools
           currentResponse = await this.gigaClient.chat(
             this.messages,
             getAllTools()
@@ -252,6 +273,7 @@ Current working directory: ${process.cwd()}`,
               assistantMessage.content ||
               "I understand, but I don't have a specific response.",
             timestamp: new Date(),
+            metrics: currentResponse.metrics,
           };
           this.chatHistory.push(finalEntry);
           this.messages.push({
@@ -358,6 +380,7 @@ Current working directory: ${process.cwd()}`,
         }
 
         // Stream response and accumulate
+        // Use the main model for conversation flow - expert routing happens at tool level
         const stream = this.gigaClient.chatStream(this.messages, getAllTools());
         let accumulatedMessage: any = {};
         let accumulatedContent = "";
@@ -457,6 +480,12 @@ Current working directory: ${process.cwd()}`,
             }
 
             const result = await this.executeTool(toolCall);
+            
+            // Log expert model usage for debugging
+            const expertModel = this.getExpertModelForTool(toolCall.function.name);
+            if (expertModel) {
+              console.log(`DEBUG: Used expert model ${expertModel} for tool ${toolCall.function.name}`);
+            }
 
             const toolResultEntry: ChatEntry = {
               type: "tool_result",
@@ -487,7 +516,18 @@ Current working directory: ${process.cwd()}`,
 
           // Continue the loop to get the next response (which might have more tool calls)
         } else {
-          // No tool calls, we're done
+          // No tool calls, we're done - add metrics to the last assistant entry
+          const lastAssistantEntry = this.chatHistory
+            .slice()
+            .reverse()
+            .find(entry => entry.type === "assistant");
+          
+          if (lastAssistantEntry) {
+            const streamingMetrics = this.gigaClient.getLastStreamingMetrics();
+            if (streamingMetrics) {
+              lastAssistantEntry.metrics = streamingMetrics;
+            }
+          }
           break;
         }
       }
@@ -529,6 +569,52 @@ Current working directory: ${process.cwd()}`,
     }
   }
 
+  private getExpertModelForTool(toolName: string): string | null {
+    const expertConfig = expertModelsManager.getExpertModelsConfig();
+    
+    // Check if current mode allows expert models
+    if (!modeManager.shouldAllowExpertModels() || !expertConfig.enabled) {
+      return null;
+    }
+
+    // Fast operations (file navigation, simple commands)
+    const fastTools = [
+      'view_file',
+      'bash'  // Only simple bash commands - complex ones should use reasoning
+    ];
+
+    // Code-specific operations
+    const codeTools = [
+      'str_replace_editor',
+      'create_file'
+    ];
+
+    // Reasoning-heavy operations  
+    const reasoningTools = [
+      'create_todo_list',
+      'update_todo_list'
+    ];
+
+    // Tool orchestration and complex workflows
+    const toolsTools = [
+      'list_mcp_tools',
+      'call_mcp_tool',
+      'perplexity_search'
+    ];
+
+    if (fastTools.includes(toolName)) {
+      return expertConfig.fastModel;
+    } else if (codeTools.includes(toolName)) {
+      return expertConfig.codeModel;
+    } else if (reasoningTools.includes(toolName)) {
+      return expertConfig.reasoningModel;
+    } else if (toolsTools.includes(toolName) || toolName.startsWith('mcp_')) {
+      return expertConfig.toolsModel;
+    }
+
+    return null;
+  }
+
   private async executeTool(toolCall: GrokToolCall): Promise<ToolResult> {
     try {
       const args = JSON.parse(toolCall.function.arguments);
@@ -559,6 +645,9 @@ Current working directory: ${process.cwd()}`,
 
         case "update_todo_list":
           return await this.todoTool.updateTodoList(args.updates);
+
+        case "perplexity_search":
+          return await this.perplexityTool.search(args.query, args.max_results, args.summarize);
 
         case "list_mcp_tools":
           return await this.mcpTool.listMcpTools();
@@ -616,6 +705,101 @@ Current working directory: ${process.cwd()}`,
   abortCurrentOperation(): void {
     if (this.abortController) {
       this.abortController.abort();
+    }
+  }
+
+  setSelectedCustomPrompt(promptName: string | null): void {
+    this.selectedCustomPrompt = promptName;
+    this.updateSystemPrompt();
+  }
+
+  getSelectedCustomPrompt(): string | null {
+    return this.selectedCustomPrompt;
+  }
+
+  // Method to restore conversation state when switching conversations
+  restoreConversation(chatEntries: ChatEntry[]): void {
+    // Clear current messages (but keep system prompt)
+    const systemMessage = this.messages.find(m => m.role === 'system');
+    this.messages = systemMessage ? [systemMessage] : [];
+    this.chatHistory = [];
+
+    // Convert ChatEntry[] back to GrokMessage[] format
+    for (const entry of chatEntries) {
+      if (entry.type === 'user') {
+        this.messages.push({
+          role: 'user',
+          content: entry.content
+        });
+      } else if (entry.type === 'assistant') {
+        this.messages.push({
+          role: 'assistant',
+          content: entry.content,
+          tool_calls: entry.toolCalls
+        } as any);
+      } else if (entry.type === 'tool_result' && entry.toolCall) {
+        this.messages.push({
+          role: 'tool',
+          content: entry.content,
+          tool_call_id: entry.toolCall.id
+        });
+      }
+    }
+
+    // Restore chat history
+    this.chatHistory = [...chatEntries];
+  }
+
+  updateMode(mode: AgentMode): void {
+    modeManager.setMode(mode);
+  }
+
+  getCurrentMode(): AgentMode {
+    return modeManager.getCurrentMode();
+  }
+
+  getModeConfig() {
+    return modeManager.getCurrentModeConfig();
+  }
+
+  private updateSystemPrompt(): void {
+    let systemContent = '';
+    
+    // If a custom prompt is selected, use ONLY that prompt
+    if (this.selectedCustomPrompt) {
+      const { getPromptByName } = require('../utils/prompts');
+      const customPrompt = getPromptByName(this.selectedCustomPrompt);
+      if (customPrompt) {
+        systemContent = customPrompt.content;
+      } else {
+        // Fallback to base system prompt if custom prompt not found
+        systemContent = this.baseSystemPrompt;
+      }
+    } else {
+      // Use base GIGA system prompt when no custom prompt is selected
+      systemContent = this.baseSystemPrompt;
+    }
+    
+    // Add mode-specific instructions
+    const currentMode = modeManager.getCurrentMode();
+    if (currentMode !== AgentMode.GIGA) {
+      systemContent += `\n\nCURRENT MODE: ${modeManager.getModeDisplayName()}\n${modeManager.getModeDescription()}`;
+      
+      if (currentMode === AgentMode.PLAN) {
+        systemContent += '\n\nIn PLAN MODE: Focus on planning and analysis. Avoid complex tool usage - prefer thinking through problems step by step.';
+      } else if (currentMode === AgentMode.CHILL) {
+        systemContent += '\n\nIn CHILL MODE: All capabilities available but ask for permission before making changes to files or running potentially impactful commands.';
+      }
+    }
+    
+    // Update or add system message
+    if (this.messages.length > 0 && this.messages[0].role === 'system') {
+      this.messages[0].content = systemContent;
+    } else {
+      this.messages.unshift({
+        role: 'system',
+        content: systemContent
+      });
     }
   }
 }

@@ -1,4 +1,5 @@
 import { PROVIDER_MODELS, ProviderName } from './provider-models';
+import { fetchOllamaModels } from './ollama-models';
 
 export interface ModelInfo {
   id: string;
@@ -184,8 +185,24 @@ async function fetchOpenaiModels(apiKey: string): Promise<ModelFetchResult> {
   }
 }
 
+// Fetch models from Ollama API
+async function fetchOllamaModelsFromApi(baseUrl: string): Promise<ModelFetchResult> {
+  try {
+    const models = await fetchOllamaModels(baseUrl);
+    return { success: true, models };
+  } catch (error: any) {
+    return { success: false, models: [], error: error.message };
+  }
+}
+
 // Main function to fetch models for a provider
 export async function fetchProviderModels(provider: ProviderName, apiKey: string): Promise<ModelFetchResult> {
+  // For Ollama, apiKey is actually the base URL
+  if (provider.toLowerCase() === 'ollama') {
+    const baseUrl = apiKey || 'http://localhost:11434';
+    return await fetchOllamaModelsFromApi(baseUrl);
+  }
+
   if (!apiKey || !apiKey.trim()) {
     return { success: false, models: [], error: 'API key is required' };
   }

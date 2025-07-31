@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import Cerebras from '@cerebras/cerebras_cloud_sdk';
+import { testOllamaConnection } from './ollama-models';
 
 export interface ApiKeyValidationResult {
   isValid: boolean;
@@ -154,8 +155,34 @@ export async function validateOpenaiKey(apiKey: string): Promise<ApiKeyValidatio
   }
 }
 
+// Validate Ollama connection (baseUrl instead of API key)
+export async function validateOllamaUrl(baseUrl: string): Promise<ApiKeyValidationResult> {
+  try {
+    const result = await testOllamaConnection(baseUrl);
+    
+    if (result.success) {
+      return { 
+        isValid: true, 
+      };
+    } else {
+      return { 
+        isValid: false, 
+        error: result.error || "Cannot connect to Ollama" 
+      };
+    }
+  } catch (error: any) {
+    return { isValid: false, error: error?.message || "Ollama connection failed" };
+  }
+}
+
 // Main validation function that routes to the correct provider
 export async function validateApiKey(provider: string, apiKey: string, model?: string): Promise<ApiKeyValidationResult> {
+  // Special case for Ollama - it's a base URL, not an API key, and can be empty (defaults to localhost)
+  if (provider.toLowerCase() === 'ollama') {
+    const baseUrl = apiKey || 'http://localhost:11434';
+    return validateOllamaUrl(baseUrl);
+  }
+
   if (!apiKey || !apiKey.trim()) {
     return { isValid: false, error: 'API key is empty' };
   }

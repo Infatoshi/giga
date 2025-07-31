@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 export interface SessionConfig {
   instanceId: string;
   currentModel: string;
+  temperature?: number;
   createdAt: string;
   lastUsed: string;
 }
@@ -112,6 +113,52 @@ class SessionManager {
       );
     } catch (error) {
       console.error('Error saving current model:', error);
+    }
+  }
+  
+  public getTemperature(): number {
+    try {
+      const configPath = this.getSessionConfigPath();
+      
+      if (!fs.existsSync(configPath)) {
+        return 0.7; // default temperature
+      }
+      
+      const config: SessionConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      return config.temperature ?? 0.7;
+    } catch (error) {
+      console.error('Error loading temperature:', error);
+      return 0.7;
+    }
+  }
+  
+  public setTemperature(temperature: number): void {
+    try {
+      const configPath = this.getSessionConfigPath();
+      let config: SessionConfig;
+      
+      if (fs.existsSync(configPath)) {
+        config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      } else {
+        config = {
+          instanceId: this.instanceId,
+          currentModel: 'moonshotai/kimi-k2-instruct',
+          temperature: temperature,
+          createdAt: new Date().toISOString(),
+          lastUsed: new Date().toISOString()
+        };
+      }
+      
+      config.temperature = temperature;
+      config.lastUsed = new Date().toISOString();
+      
+      fs.writeFileSync(
+        configPath, 
+        JSON.stringify(config, null, 2), 
+        { mode: 0o600 }
+      );
+    } catch (error) {
+      console.error('Error saving temperature:', error);
     }
   }
   

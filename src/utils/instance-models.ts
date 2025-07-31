@@ -41,7 +41,7 @@ export function loadInstanceModelPreferences(): InstanceModelPreferences {
       return {
         instanceId: sessionInfo.instanceId,
         favoriteModels: [],
-        recentlyUsedModels: [sessionInfo.currentModel],
+        recentlyUsedModels: sessionInfo.currentModel ? [sessionInfo.currentModel] : [],
         lastUpdated: new Date().toISOString()
       };
     }

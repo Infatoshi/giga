@@ -3,6 +3,11 @@ export interface ToolResult {
   output?: string;
   error?: string;
   data?: any;
+  metadata?: {
+    userSummary?: string;
+    query?: string;
+    [key: string]: any;
+  };
 }
 
 export interface Tool {
@@ -30,4 +35,18 @@ export interface AgentState {
 export interface ConfirmationState {
   skipThisSession: boolean;
   pendingOperation: boolean;
+}
+
+export enum AgentMode {
+  PLAN = 'plan',
+  CHILL = 'chill', 
+  GIGA = 'giga'
+}
+
+export interface ModeConfig {
+  mode: AgentMode;
+  allowExpertModels: boolean;
+  requireConfirmation: boolean;
+  displayName: string;
+  description: string;
 }

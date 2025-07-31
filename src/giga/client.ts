@@ -3,6 +3,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat';
 import Cerebras from '@cerebras/cerebras_cloud_sdk';
 import { sessionManager } from '../utils/session-manager';
 import { getOpenRouterProvider } from '../utils/added-models';
+import { createTokenCounter } from '../utils/token-counter';
 
 export type GrokMessage = ChatCompletionMessageParam;
 
@@ -37,6 +38,26 @@ export interface GrokResponse {
     };
     finish_reason: string;
   }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+  metrics?: {
+    prefillTimeMs: number;
+    decodeTimeMs: number;
+    outputTokens: number;
+    tokensPerSecond: number;
+  };
+}
+
+export interface ApiCallMetrics {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  durationMs: number;
+  tokensPerSecond: number;
 }
 
 interface APIConfig {
@@ -53,6 +74,7 @@ export class GigaClient {
   private cerebrasClient: Cerebras;
   private perplexityClient: OpenAI;
   private openaiClient: OpenAI;
+  private ollamaClient: OpenAI;
   // Remove instance-level currentModel - now managed by sessionManager
   private groqApiKey?: string;
   private anthropicApiKey?: string;
@@ -61,6 +83,13 @@ export class GigaClient {
   private cerebrasApiKey?: string;
   private perplexityApiKey?: string;
   private openaiApiKey?: string;
+  private ollamaBaseUrl?: string;
+  private lastStreamingMetrics?: {
+    prefillTimeMs: number;
+    decodeTimeMs: number;
+    outputTokens: number;
+    tokensPerSecond: number;
+  };
 
   constructor(
     apiKey: string, 
@@ -71,7 +100,8 @@ export class GigaClient {
     googleApiKey?: string,
     cerebrasApiKey?: string,
     perplexityApiKey?: string,
-    openaiApiKey?: string
+    openaiApiKey?: string,
+    ollamaBaseUrl?: string
   ) {
     this.xaiClient = new OpenAI({
       apiKey,
@@ -141,12 +171,74 @@ export class GigaClient {
       });
     }
     
+    this.ollamaBaseUrl = ollamaBaseUrl || 'http://localhost:11434';
+    
+    // Ensure Ollama base URL has proper protocol
+    let cleanOllamaUrl = this.ollamaBaseUrl;
+    if (!cleanOllamaUrl.startsWith('http://') && !cleanOllamaUrl.startsWith('https://')) {
+      cleanOllamaUrl = `http://${cleanOllamaUrl}`;
+    }
+    
+    this.ollamaClient = new OpenAI({
+      apiKey: 'ollama', // Ollama doesn't require a real API key
+      baseURL: cleanOllamaUrl + '/v1',
+      timeout: 360000,
+    });
+    
     if (model) {
       sessionManager.setCurrentModel(model);
     }
   }
 
   private getClientForModel(model: string): OpenAI | Cerebras {
+    // First check added models to get the correct provider
+    const addedModels = require('../utils/added-models').loadAddedModels();
+    const addedModel = addedModels.find((m: any) => m.modelName === model);
+    
+    if (addedModel) {
+      const providerName = addedModel.providerName.toLowerCase();
+      switch (providerName) {
+        case 'openrouter':
+          if (!this.openRouterClient) {
+            throw new Error('OpenRouter API key not provided. Please configure it in /providers.');
+          }
+          return this.openRouterClient;
+        case 'anthropic':
+          if (!this.anthropicClient) {
+            throw new Error('Anthropic API key not provided. Please configure it in /providers.');
+          }
+          return this.anthropicClient;
+        case 'google':
+          if (!this.googleClient) {
+            throw new Error('Google API key not provided. Please configure it in /providers.');
+          }
+          return this.googleClient;
+        case 'xai':
+          return this.xaiClient;
+        case 'groq':
+          if (!this.groqClient) {
+            throw new Error('Groq API key not provided. Please configure it in /providers.');
+          }
+          return this.groqClient;
+        case 'cerebras':
+          if (!this.cerebrasClient) {
+            throw new Error('Cerebras API key not provided. Please configure it in /providers.');
+          }
+          return this.cerebrasClient;
+        case 'perplexity':
+          if (!this.perplexityClient) {
+            throw new Error('Perplexity API key not provided. Please configure it in /providers.');
+          }
+          return this.perplexityClient;
+        case 'openai':
+          if (!this.openaiClient) {
+            throw new Error('OpenAI API key not provided. Please configure it in /providers.');
+          }
+          return this.openaiClient;
+        case 'ollama':
+          return this.ollamaClient;
+      }
+    }
     // OpenRouter models (access to multiple providers through one API)
     const openRouterModels = [
       'qwen/qwen3-235b-a22b-07-25',
@@ -220,6 +312,53 @@ export class GigaClient {
       'gpt-4'
     ];
     
+    // Ollama models (dynamic - check by model format or known models)
+    const isOllamaModel = (modelName: string): boolean => {
+      // Check if it's a known Ollama model format or common Ollama models
+      const commonOllamaModels = [
+        'llama2', 'llama2:7b', 'llama2:13b', 'llama2:70b',
+        'llama3', 'llama3:8b', 'llama3:70b', 'llama3.1', 'llama3.1:8b', 'llama3.1:70b', 'llama3.1:405b',
+        'llama3.2', 'llama3.2:3b', 'llama3.2:11b', 'llama3.2:90b',
+        'codellama', 'codellama:7b', 'codellama:13b', 'codellama:34b',
+        'mistral', 'mistral:7b', 'mistral:instruct',
+        'mixtral', 'mixtral:8x7b', 'mixtral:8x22b',
+        'qwen', 'qwen:4b', 'qwen:7b', 'qwen:14b', 'qwen:32b', 'qwen:72b',
+        'qwen2', 'qwen2:0.5b', 'qwen2:1.5b', 'qwen2:7b', 'qwen2:72b',
+        'qwen2.5', 'qwen2.5:0.5b', 'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b', 'qwen2.5:14b', 'qwen2.5:32b', 'qwen2.5:72b',
+        'deepseek-coder', 'deepseek-coder:6.7b', 'deepseek-coder:33b',
+        'gemma', 'gemma:2b', 'gemma:7b', 'gemma2', 'gemma2:9b', 'gemma2:27b',
+        'phi', 'phi3', 'phi3:3.8b', 'phi3:14b',
+        'vicuna', 'vicuna:7b', 'vicuna:13b', 'vicuna:33b',
+        'orca-mini', 'orca-mini:3b', 'orca-mini:7b', 'orca-mini:13b',
+        'neural-chat', 'neural-chat:7b',
+        'starling-lm', 'starling-lm:7b',
+        'tinyllama', 'tinyllama:1.1b',
+        'wizard-vicuna-uncensored', 'wizard-vicuna-uncensored:7b', 'wizard-vicuna-uncensored:13b',
+        'nous-hermes', 'nous-hermes:7b', 'nous-hermes:13b', 'nous-hermes2',
+        'dolphin-mistral', 'dolphin-mistral:7b',
+        'solar', 'solar:10.7b'
+      ];
+      
+      if (commonOllamaModels.includes(modelName.toLowerCase())) {
+        return true;
+      }
+      
+      // Check for Ollama model format patterns (model:tag or model/variant)
+      return /^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/.test(modelName) || 
+             /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(modelName) ||
+             // Simple heuristic: if it doesn't match other providers and contains certain patterns
+             (modelName.includes('llama') || modelName.includes('qwen') || modelName.includes('mistral') || 
+              modelName.includes('gemma') || modelName.includes('phi') || modelName.includes('deepseek')) &&
+             !openRouterModels.includes(modelName) && 
+             !anthropicModels.includes(modelName) &&
+             !googleModels.includes(modelName) &&
+             !xaiModels.includes(modelName) &&
+             !groqModels.includes(modelName) &&
+             !cerebrasModels.includes(modelName) &&
+             !perplexityModels.includes(modelName) &&
+             !openaiModels.includes(modelName);
+    };
+    
     if (openRouterModels.includes(model)) {
       if (!this.openRouterClient) {
         throw new Error('OpenRouter API key not provided. Please configure it in /providers.');
@@ -257,6 +396,8 @@ export class GigaClient {
         throw new Error('OpenAI API key not provided. Please configure it in /providers.');
       }
       return this.openaiClient;
+    } else if (isOllamaModel(model)) {
+      return this.ollamaClient;
     }
     
     // Default to XAI for unknown models or grok models
@@ -271,13 +412,26 @@ export class GigaClient {
     return sessionManager.getCurrentModel();
   }
 
+  getLastStreamingMetrics(): { prefillTimeMs: number; decodeTimeMs: number; outputTokens: number; tokensPerSecond: number; } | undefined {
+    return this.lastStreamingMetrics;
+  }
+
   async chat(
     messages: GrokMessage[],
     tools?: GrokTool[],
     model?: string
   ): Promise<GrokResponse> {
+    const startTime = Date.now();
+    const targetModel = model || sessionManager.getCurrentModel();
+    
     try {
-      const targetModel = model || sessionManager.getCurrentModel();
+      // Check if no model is configured
+      if (!targetModel) {
+        throw new Error('No model selected. Please configure a model first:\n\n1. Set up API keys: /providers\n2. Add models: /add-model\n3. Select a model: /models\n\nFor a quick start, try:\n• /providers → Add your API keys\n• /add-model → Add models from your providers\n• /models → Select the current model');
+      }
+      
+      const tokenCounter = createTokenCounter(targetModel);
+      const inputTokens = tokenCounter.countMessageTokens(messages as any);
       const client = this.getClientForModel(targetModel);
       
       // Check if this is a Cerebras client
@@ -285,7 +439,7 @@ export class GigaClient {
         const requestBody: any = {
           model: targetModel,
           messages,
-          temperature: 0.7,
+          temperature: sessionManager.getTemperature(),
           max_completion_tokens: 4000,
           top_p: 0.95,
         };
@@ -294,6 +448,35 @@ export class GigaClient {
         console.log(`DEBUG: Cerebras API Key present: ${this.cerebrasApiKey ? 'Yes' : 'No'}`);
         
         const response = await client.chat.completions.create(requestBody);
+        const endTime = Date.now();
+        const durationMs = endTime - startTime;
+        
+        // Calculate tokens and throughput for Cerebras
+        let outputTokens = 0;
+        if ((response as any).usage?.completion_tokens) {
+          outputTokens = (response as any).usage.completion_tokens;
+        } else {
+          // Fallback: estimate from response content
+          const content = response.choices[0]?.message?.content || '';
+          outputTokens = tokenCounter.countTokens(content);
+        }
+        
+        const totalTokens = inputTokens + outputTokens;
+        const outputTokensPerSecond = outputTokens / (durationMs / 1000);
+        
+        // Add metrics to response (console display handled by streaming or agent)
+        // For non-streaming, estimate prefill as 30% of total time or max 1s
+        const prefillTime = Math.min(1000, Math.round(durationMs * 0.3));
+        const decodeTime = durationMs - prefillTime;
+        const decodeTokensPerSecond = decodeTime > 0 ? outputTokens / (decodeTime / 1000) : 0;
+        (response as any).metrics = {
+          prefillTimeMs: prefillTime,
+          decodeTimeMs: decodeTime,
+          outputTokens: outputTokens,
+          tokensPerSecond: Math.round(decodeTokensPerSecond)
+        };
+        
+        tokenCounter.dispose();
         return response as GrokResponse;
       }
       
@@ -304,7 +487,7 @@ export class GigaClient {
         messages,
         tools: tools || [],
         tool_choice: tools ? 'auto' : undefined,
-        temperature: 0.7,
+        temperature: sessionManager.getTemperature(),
         max_tokens: 4000,
       };
 
@@ -329,10 +512,40 @@ export class GigaClient {
       });
       
       const response = await (client as OpenAI).chat.completions.create(requestBody);
-
+      const endTime = Date.now();
+      const durationMs = endTime - startTime;
+      
+      // Calculate tokens and throughput
+      let outputTokens = 0;
+      if ((response as any).usage?.completion_tokens) {
+        outputTokens = (response as any).usage.completion_tokens;
+      } else {
+        // Fallback: estimate from response content
+        const content = response.choices[0]?.message?.content || '';
+        outputTokens = tokenCounter.countTokens(content);
+      }
+      
+      const totalTokens = inputTokens + outputTokens;
+      const outputTokensPerSecond = outputTokens / (durationMs / 1000);
+      
+      // Add metrics to response (console display handled by streaming or agent)
+      // For non-streaming, estimate prefill as 30% of total time or max 1s
+      const prefillTime = Math.min(1000, Math.round(durationMs * 0.3));
+      const decodeTime = durationMs - prefillTime;
+      const decodeTokensPerSecond = decodeTime > 0 ? outputTokens / (decodeTime / 1000) : 0;
+      (response as any).metrics = {
+        prefillTimeMs: prefillTime,
+        decodeTimeMs: decodeTime,
+        outputTokens: outputTokens,
+        tokensPerSecond: Math.round(decodeTokensPerSecond)
+      };
+      
+      tokenCounter.dispose();
       return response as GrokResponse;
     } catch (error: any) {
-      console.log(`DEBUG: API Error for model ${model || sessionManager.getCurrentModel()}:`, error.message);
+      const endTime = Date.now();
+      const durationMs = endTime - startTime;
+      console.log(`DEBUG: API Error for model ${targetModel} after ${(durationMs/1000).toFixed(1)}s:`, error.message);
       throw new Error(`API error: ${error.message}`);
     }
   }
@@ -342,8 +555,19 @@ export class GigaClient {
     tools?: GrokTool[],
     model?: string
   ): AsyncGenerator<any, void, unknown> {
+    const startTime = Date.now();
+    const targetModel = model || sessionManager.getCurrentModel();
+    let accumulatedContent = '';
+    let firstTokenTime: number | null = null;
+    
     try {
-      const targetModel = model || sessionManager.getCurrentModel();
+      // Check if no model is configured
+      if (!targetModel) {
+        throw new Error('No model selected. Please configure a model first:\n\n1. Set up API keys: /providers\n2. Add models: /add-model\n3. Select a model: /models\n\nFor a quick start, try:\n• /providers → Add your API keys\n• /add-model → Add models from your providers\n• /models → Select the current model');
+      }
+      
+      const tokenCounter = createTokenCounter(targetModel);
+      const inputTokens = tokenCounter.countMessageTokens(messages as any);
       const client = this.getClientForModel(targetModel);
       
       // Check if this is a Cerebras client
@@ -351,7 +575,7 @@ export class GigaClient {
         const requestBody: any = {
           model: targetModel,
           messages,
-          temperature: 0.7,
+          temperature: sessionManager.getTemperature(),
           max_completion_tokens: 4000,
           top_p: 0.95,
           stream: true,
@@ -362,8 +586,35 @@ export class GigaClient {
         const stream = await client.chat.completions.create(requestBody) as any;
 
         for await (const chunk of stream) {
+          if (chunk.choices?.[0]?.delta?.content) {
+            if (firstTokenTime === null) {
+              firstTokenTime = Date.now();
+            }
+            accumulatedContent += chunk.choices[0].delta.content;
+          }
           yield chunk;
         }
+        
+        // Calculate and display metrics for Cerebras streaming
+        const endTime = Date.now();
+        const durationMs = endTime - startTime;
+        const outputTokens = tokenCounter.countTokens(accumulatedContent);
+        const totalTokens = inputTokens + outputTokens;
+        const outputTokensPerSecond = outputTokens / (durationMs / 1000);
+        
+        // Calculate actual prefill and decode times
+        const prefillTime = firstTokenTime ? firstTokenTime - startTime : Math.round(durationMs * 0.3);
+        const decodeTime = firstTokenTime ? endTime - firstTokenTime : durationMs - prefillTime;
+        const decodeTokensPerSecond = decodeTime > 0 ? outputTokens / (decodeTime / 1000) : 0;
+        
+        console.log(`\x1b[34mprefill - ${prefillTime}ms\x1b[0m | \x1b[33mdecode - ${Math.round(decodeTokensPerSecond)} toks/sec (${outputTokens} out / ${decodeTime}ms)\x1b[0m`);
+        this.lastStreamingMetrics = {
+          prefillTimeMs: prefillTime,
+          decodeTimeMs: decodeTime,
+          outputTokens: outputTokens,
+          tokensPerSecond: Math.round(decodeTokensPerSecond)
+        };
+        tokenCounter.dispose();
         return;
       }
       
@@ -374,7 +625,7 @@ export class GigaClient {
         messages,
         tools: tools || [],
         tool_choice: tools ? 'auto' : undefined,
-        temperature: 0.7,
+        temperature: sessionManager.getTemperature(),
         max_tokens: 4000,
         stream: true,
       };
@@ -392,9 +643,39 @@ export class GigaClient {
       const stream = await (client as OpenAI).chat.completions.create(requestBody) as any;
 
       for await (const chunk of stream) {
+        if (chunk.choices?.[0]?.delta?.content) {
+          if (firstTokenTime === null) {
+            firstTokenTime = Date.now();
+          }
+          accumulatedContent += chunk.choices[0].delta.content;
+        }
         yield chunk;
       }
+      
+      // Calculate and display metrics for streaming
+      const endTime = Date.now();
+      const durationMs = endTime - startTime;
+      const outputTokens = tokenCounter.countTokens(accumulatedContent);
+      const totalTokens = inputTokens + outputTokens;
+      const outputTokensPerSecond = outputTokens / (durationMs / 1000);
+      
+      // Calculate actual prefill and decode times
+      const prefillTime = firstTokenTime ? firstTokenTime - startTime : Math.round(durationMs * 0.3);
+      const decodeTime = firstTokenTime ? endTime - firstTokenTime : durationMs - prefillTime;
+      const decodeTokensPerSecond = decodeTime > 0 ? outputTokens / (decodeTime / 1000) : 0;
+      
+      console.log(`\x1b[34mprefill - ${prefillTime}ms\x1b[0m | \x1b[33mdecode - ${Math.round(decodeTokensPerSecond)} toks/sec (${outputTokens} out / ${decodeTime}ms)\x1b[0m`);
+      this.lastStreamingMetrics = {
+        prefillTimeMs: prefillTime,
+        decodeTimeMs: decodeTime,
+        outputTokens: outputTokens,
+        tokensPerSecond: Math.round(decodeTokensPerSecond)
+      };
+      tokenCounter.dispose();
     } catch (error: any) {
+      const endTime = Date.now();
+      const durationMs = endTime - startTime;
+      console.log(`DEBUG: Streaming API Error for model ${targetModel} after ${(durationMs/1000).toFixed(1)}s:`, error.message);
       throw new Error(`API error: ${error.message}`);
     }
   }

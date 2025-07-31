@@ -8,6 +8,9 @@ import { fuzzySearch } from "../utils/fuzzy-search";
 import { getInstanceAvailableModels, onModelSelected } from "../utils/instance-models";
 import { OpenRouterProvider, isOpenRouterModel } from "../utils/openrouter-providers";
 import { setOpenRouterProvider, getOpenRouterProvider } from "../utils/added-models";
+import { sessionManager } from "../utils/session-manager";
+import { modeManager } from "../utils/mode-manager";
+import { AgentMode } from "../types";
 
 // Helper function to get OpenRouter models consistently
 const getOpenRouterModels = (models: ModelOption[]): ModelOption[] => {
@@ -26,6 +29,7 @@ interface UseInputHandlerProps {
   isProcessing: boolean;
   isStreaming: boolean;
   isConfirmationActive?: boolean;
+  onModeChange?: (mode: AgentMode) => void;
 }
 
 interface CommandSuggestion {
@@ -56,6 +60,7 @@ export function useInputHandler({
   isProcessing,
   isStreaming,
   isConfirmationActive = false,
+  onModeChange,
 }: UseInputHandlerProps) {
   const [input, setInput] = useState("");
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
@@ -75,6 +80,10 @@ export function useInputHandler({
   const [selectedMcpServerIndex, setSelectedMcpServerIndex] = useState(0);
   const [dynamicModels, setDynamicModels] = useState<ModelOption[]>([]);
   const [mcpServers, setMcpServers] = useState<AddedMcpServer[]>([]);
+  const [showConversationHistory, setShowConversationHistory] = useState(false);
+  const [showTemperatureSelector, setShowTemperatureSelector] = useState(false);
+  const [currentTemperature, setCurrentTemperature] = useState(0.7);
+  const [showExpertModels, setShowExpertModels] = useState(false);
   
   // Route selection state
   const [showRouteSelection, setShowRouteSelection] = useState(false);
@@ -147,6 +156,18 @@ export function useInputHandler({
     setIsLoadingProviders(false);
   };
 
+  const closeConversationHistory = () => {
+    setShowConversationHistory(false);
+  };
+
+  const closeTemperatureSelector = () => {
+    setShowTemperatureSelector(false);
+  };
+
+  const closeExpertModels = () => {
+    setShowExpertModels(false);
+  };
+
   const refreshModels = () => {
     const instanceModels = getInstanceAvailableModels();
     const modelOptions: ModelOption[] = instanceModels.map(model => ({
@@ -182,6 +203,7 @@ export function useInputHandler({
   useEffect(() => {
     refreshModels();
     refreshMcpServers();
+    setCurrentTemperature(sessionManager.getTemperature());
   }, []);
 
   const { exit } = useApp();
@@ -189,6 +211,7 @@ export function useInputHandler({
   const commandSuggestions: CommandSuggestion[] = [
     { command: "/help", description: "Show help information" },
     { command: "/clear", description: "Clear chat history" },
+    { command: "/history", description: "Browse conversation history" },
     { command: "/models", description: "Switch Grok Model" },
     { command: "/route", description: "Configure model provider routing" },
     { command: "/add-model", description: "Add models from providers" },
@@ -199,6 +222,8 @@ export function useInputHandler({
     { command: "/mcps", description: "View MCP servers" },
     { command: "/add-mcp", description: "Add MCP server" },
     { command: "/delete-mcp", description: "Delete MCP server" },
+    { command: "/sampling", description: "Adjust sampling temperature" },
+    { command: "/experts", description: "Configure expert model routing" },
     { command: "/providers", description: "Configure API Keys" },
     { command: "/exit", description: "Exit the application" },
   ];
@@ -214,6 +239,7 @@ export function useInputHandler({
     { name: "Cerebras", keyName: "cerebrasApiKey", description: "Cerebras models" },
     { name: "Perplexity", keyName: "perplexityApiKey", description: "Perplexity models" },
     { name: "OpenAI", keyName: "openaiApiKey", description: "GPT models" },
+    { name: "Ollama", keyName: "ollamaBaseUrl", description: "Local Ollama models" },
   ];
 
   const handleDirectCommand = async (input: string): Promise<boolean> => {
@@ -247,6 +273,7 @@ export function useInputHandler({
 Built-in Commands:
   /clear        - Clear chat history
   /help         - Show this help
+  /history      - Browse conversation history (Ctrl+H)
   /models       - Switch models
   /route        - Configure model provider routing
   /add-model    - Add models from providers
@@ -257,6 +284,8 @@ Built-in Commands:
   /mcps         - View MCP servers
   /add-mcp      - Add MCP server
   /delete-mcp   - Delete MCP server
+  /sampling     - Adjust sampling temperature
+  /experts      - Configure expert model routing
   /providers    - Configure API keys
   /exit         - Exit application
   exit, quit    - Exit application
@@ -277,6 +306,13 @@ Examples:
         timestamp: new Date(),
       };
       setChatHistory((prev) => [...prev, helpEntry]);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/history") {
+      setShowConversationHistory(true);
       addToHistory(trimmedInput);
       setInput("");
       return true;
@@ -359,6 +395,21 @@ Examples:
       setShowRouteSelection(true);
       setRouteViewMode('models');
       setSelectedRouteModelIndex(0);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/sampling") {
+      setShowTemperatureSelector(true);
+      setCurrentTemperature(sessionManager.getTemperature());
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/experts") {
+      setShowExpertModels(true);
       addToHistory(trimmedInput);
       setInput("");
       return true;
@@ -665,16 +716,66 @@ Available models: ${modelNames.join(", ")}`,
 
   useInput(async (inputChar: string, key: any) => {
     // Don't handle input if confirmation dialog or prompt dialogs are active
-    if (isConfirmationActive || showAddPrompt || showDeletePrompt || showPromptsList || showRouteSelection) {
+    if (isConfirmationActive || showAddPrompt || showDeletePrompt || showPromptsList || showRouteSelection || showConversationHistory || showTemperatureSelector || showExpertModels) {
       // Special handling for route selection
       if (showRouteSelection) {
         await handleRouteSelectionInput(inputChar, key);
+      }
+      // Special handling for temperature selector
+      if (showTemperatureSelector) {
+        if (key.escape) {
+          closeTemperatureSelector();
+          return;
+        }
+        if (key.leftArrow) {
+          const newTemp = Math.max(0.0, currentTemperature - 0.1);
+          setCurrentTemperature(Math.round(newTemp * 10) / 10);
+          return;
+        }
+        if (key.rightArrow) {
+          const newTemp = Math.min(1.0, currentTemperature + 0.1);
+          setCurrentTemperature(Math.round(newTemp * 10) / 10);
+          return;
+        }
+        if (key.return) {
+          sessionManager.setTemperature(currentTemperature);
+          const confirmEntry: ChatEntry = {
+            type: "assistant",
+            content: `✓ Temperature set to ${currentTemperature.toFixed(1)}`,
+            timestamp: new Date(),
+          };
+          setChatHistory((prev) => [...prev, confirmEntry]);
+          closeTemperatureSelector();
+          return;
+        }
       }
       return;
     }
     
     if (key.ctrl && inputChar === "c") {
       exit();
+      return;
+    }
+
+    // Handle Shift+Tab for mode cycling
+    if (key.shift && key.tab) {
+      const newMode = modeManager.cycleMode();
+      agent.updateMode(newMode);
+      if (onModeChange) {
+        onModeChange(newMode);
+      }
+      
+      const modeEntry: ChatEntry = {
+        type: "assistant",
+        content: `🔄 Mode switched to: **${modeManager.getModeDisplayName()}** - ${modeManager.getModeDescription()}`,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, modeEntry]);
+      return;
+    }
+
+    if (key.ctrl && inputChar === "h") {
+      setShowConversationHistory(true);
       return;
     }
 
@@ -712,6 +813,18 @@ Available models: ${modelNames.join(", ")}`,
       }
       if (showDeletePrompt) {
         setShowDeletePrompt(false);
+        return;
+      }
+      if (showConversationHistory) {
+        setShowConversationHistory(false);
+        return;
+      }
+      if (showTemperatureSelector) {
+        setShowTemperatureSelector(false);
+        return;
+      }
+      if (showExpertModels) {
+        setShowExpertModels(false);
         return;
       }
       if (showMcpServers) {
@@ -945,6 +1058,10 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
     showAddMcpServer,
     showDeleteMcpServer,
     selectedMcpServerIndex,
+    showConversationHistory,
+    showTemperatureSelector,
+    currentTemperature,
+    showExpertModels,
     showRouteSelection,
     routeViewMode,
     selectedRouteModelIndex,
@@ -965,6 +1082,9 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
     closeMcpServers,
     closeAddMcpServer,
     closeDeleteMcpServer,
+    closeConversationHistory,
+    closeTemperatureSelector,
+    closeExpertModels,
     closeRouteSelection,
     refreshModels,
     refreshMcpServers,

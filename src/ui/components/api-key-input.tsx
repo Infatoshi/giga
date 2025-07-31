@@ -151,19 +151,19 @@ export default function ApiKeyInput({ onApiKeySet }: ApiKeyInputProps) {
       <Box flexDirection="column" marginBottom={1}>
         <Box borderStyle="round" borderColor={currentField === "grok" ? "blue" : "gray"} paddingX={1} marginBottom={1}>
           <Text color="gray">xAI API Key ❯ </Text>
-          <Text>{input.length > 0 ? (isSubmitting ? "*".repeat(input.length) : "*".repeat(input.length) + "█") : (isSubmitting ? " " : "█")}</Text>
+          <Text>{input.length > 0 ? (isSubmitting ? "*".repeat(input.length) : "*".repeat(input.length) + "█") : (isSubmitting ? "..." : "█")}</Text>
         </Box>
         <Box borderStyle="round" borderColor={currentField === "groq" ? "blue" : "gray"} paddingX={1} marginBottom={1}>
           <Text color="gray">Groq API Key ❯ </Text>
-          <Text>{groqInput.length > 0 ? (isSubmitting ? "*".repeat(groqInput.length) : "*".repeat(groqInput.length) + "█") : (isSubmitting ? " " : "█")}</Text>
+          <Text>{groqInput.length > 0 ? (isSubmitting ? "*".repeat(groqInput.length) : "*".repeat(groqInput.length) + "█") : (isSubmitting ? "..." : "█")}</Text>
         </Box>
         <Box borderStyle="round" borderColor={currentField === "anthropic" ? "blue" : "gray"} paddingX={1} marginBottom={1}>
           <Text color="gray">Anthropic API Key ❯ </Text>
-          <Text>{anthropicInput.length > 0 ? (isSubmitting ? "*".repeat(anthropicInput.length) : "*".repeat(anthropicInput.length) + "█") : (isSubmitting ? " " : "█")}</Text>
+          <Text>{anthropicInput.length > 0 ? (isSubmitting ? "*".repeat(anthropicInput.length) : "*".repeat(anthropicInput.length) + "█") : (isSubmitting ? "..." : "█")}</Text>
         </Box>
         <Box borderStyle="round" borderColor={currentField === "openrouter" ? "blue" : "gray"} paddingX={1} marginBottom={1}>
           <Text color="gray">OpenRouter API Key ❯ </Text>
-          <Text>{openRouterInput.length > 0 ? (isSubmitting ? "*".repeat(openRouterInput.length) : "*".repeat(openRouterInput.length) + "█") : (isSubmitting ? " " : "█")}</Text>
+          <Text>{openRouterInput.length > 0 ? (isSubmitting ? "*".repeat(openRouterInput.length) : "*".repeat(openRouterInput.length) + "█") : (isSubmitting ? "..." : "█")}</Text>
         </Box>
       </Box>
 

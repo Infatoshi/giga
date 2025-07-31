@@ -153,6 +153,29 @@ export const PROVIDER_MODELS = {
     "text-davinci-002",
     "code-davinci-002",
   ],
+  
+  ollama: [
+    // Popular Ollama models - models will be fetched dynamically
+    "llama3.2:3b",
+    "llama3.2:1b", 
+    "llama3.1:8b",
+    "llama3.1:70b",
+    "llama3:8b",
+    "llama3:70b",
+    "qwen2.5:7b",
+    "qwen2.5:14b",
+    "qwen2.5:32b",
+    "mistral:7b",
+    "gemma2:9b",
+    "gemma2:27b",
+    "phi3:3.8b",
+    "phi3:14b",
+    "deepseek-coder:6.7b",
+    "codellama:7b",
+    "codellama:13b",
+    "neural-chat:7b",
+    "tinyllama:1.1b",
+  ],
 };
 
 export type ProviderName = keyof typeof PROVIDER_MODELS;

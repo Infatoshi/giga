@@ -47,7 +47,8 @@ export default function AddModel({
     
     for (const provider of providers) {
       const keyValue = (apiKeys as any)[provider.keyName];
-      if (keyValue) {
+      // Ollama always has a base URL (defaults to localhost), so it's always available
+      if (keyValue || provider.keyName === 'ollamaBaseUrl') {
         providersWithKeys.push(provider);
       }
     }

@@ -71,6 +71,13 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
                   <MarkdownRenderer content={entry.content.trim()} />
                 )}
                 {entry.isStreaming && <Text color="cyan">█</Text>}
+                {entry.metrics && !entry.isStreaming && (
+                  <Box marginTop={1}>
+                    <Text color="blue">prefill - {entry.metrics.prefillTimeMs}ms</Text>
+                    <Text color="white"> | </Text>
+                    <Text color="yellow">decode - {entry.metrics.tokensPerSecond} toks/sec ({entry.metrics.outputTokens} out / {entry.metrics.decodeTimeMs}ms)</Text>
+                  </Box>
+                )}
               </Box>
             </Box>
           </Box>
@@ -91,6 +98,8 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
               return "Created Todo";
             case "update_todo_list":
               return "Updated Todo";
+            case "perplexity_search":
+              return "Search";
             default:
               return "Tool";
           }
@@ -100,11 +109,15 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
           if (toolCall?.function?.arguments) {
             try {
               const args = JSON.parse(toolCall.function.arguments);
-              // Handle todo tools specially - they don't have file paths
+              // Handle todo tools and search tools specially - they don't have file paths
               if (
                 toolCall.function.name === "create_todo_list" ||
-                toolCall.function.name === "update_todo_list"
+                toolCall.function.name === "update_todo_list" ||
+                toolCall.function.name === "perplexity_search"
               ) {
+                if (toolCall.function.name === "perplexity_search") {
+                  return `"${args.query || 'unknown query'}"`;
+                }
                 return "";
               }
               return args.path || args.file_path || args.command || "unknown";
@@ -123,6 +136,7 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
         const shouldShowDiff =
           toolName === "str_replace_editor" || toolName === "create_file";
         const shouldShowFileContent = toolName === "view_file";
+        const shouldShowSearchResult = toolName === "perplexity_search";
 
         return (
           <Box key={index} flexDirection="column" marginTop={1}>
@@ -140,6 +154,10 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
                   <Box marginLeft={2} flexDirection="column">
                     {renderFileContent(entry.content)}
                   </Box>
+                </Box>
+              ) : shouldShowSearchResult ? (
+                <Box flexDirection="column">
+                  <Text color="gray">⎿ {entry.toolResult?.metadata?.userSummary || 'Search completed'}</Text>
                 </Box>
               ) : shouldShowDiff ? (
                 // For diff results, show only the summary line, not the raw content

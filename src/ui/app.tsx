@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { Agent } from '../agent';
-import { ToolResult } from '../types';
+import { ToolResult, AgentMode } from '../types';
 import { ConfirmationService, ConfirmationOptions } from '../utils/confirmation-service';
 import ConfirmationDialog from './components/confirmation-dialog';
+import { modeManager } from '../utils/mode-manager';
 import chalk from 'chalk';
 
 interface Props {
@@ -15,6 +16,7 @@ export default function App({ agent }: Props) {
   const [history, setHistory] = useState<Array<{ command: string; result: ToolResult }>>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [confirmationOptions, setConfirmationOptions] = useState<ConfirmationOptions | null>(null);
+  const [currentMode, setCurrentMode] = useState<AgentMode>(modeManager.getCurrentMode());
   const { exit } = useApp();
   
   const confirmationService = ConfirmationService.getInstance();
@@ -41,6 +43,12 @@ export default function App({ agent }: Props) {
     if (confirmationOptions) {
       return;
     }
+    
+    // Handle Shift+Tab for mode cycling (Note: This is handled in ChatInterface now)
+    if (key.shift && key.tab) {
+      return;
+    }
+    
     if (key.ctrl && inputChar === 'c') {
       exit();
       return;
@@ -122,10 +130,16 @@ export default function App({ agent }: Props) {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Box marginBottom={1}>
+      <Box marginBottom={1} flexDirection="column">
         <Text bold color="cyan">
           🔧 Grok CLI - Text Editor Agent
         </Text>
+        <Box marginTop={1}>
+          <Text bold color={currentMode === AgentMode.GIGA ? 'yellow' : currentMode === AgentMode.CHILL ? 'green' : 'blue'}>
+            {modeManager.getModeDisplayName()}
+          </Text>
+          <Text dimColor> - {modeManager.getModeDescription()}</Text>
+        </Box>
       </Box>
       
       <Box flexDirection="column" marginBottom={1}>
@@ -133,7 +147,7 @@ export default function App({ agent }: Props) {
           Available commands: view, str_replace, create, insert, undo_edit, bash, help
         </Text>
         <Text dimColor>
-          Type 'help' for detailed usage, 'exit' or Ctrl+C to quit
+          Type 'help' for detailed usage, 'exit' or Ctrl+C to quit, Shift+Tab to cycle modes
         </Text>
       </Box>
 

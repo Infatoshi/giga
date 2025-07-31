@@ -12,6 +12,7 @@ interface UserSettings {
   cerebrasApiKey?: string;
   perplexityApiKey?: string;
   openaiApiKey?: string;
+  ollamaBaseUrl?: string;
 }
 
 export interface ApiKeys {
@@ -23,6 +24,7 @@ export interface ApiKeys {
   cerebrasApiKey?: string;
   perplexityApiKey?: string;
   openaiApiKey?: string;
+  ollamaBaseUrl?: string;
 }
 
 function checkShellFiles(): ApiKeys {
@@ -44,6 +46,7 @@ function checkShellFiles(): ApiKeys {
     cerebrasApiKey: /export\s+CEREBRAS_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
     perplexityApiKey: /export\s+PERPLEXITY_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
     openaiApiKey: /export\s+OPENAI_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
+    ollamaBaseUrl: /export\s+OLLAMA_BASE_URL\s*=\s*['"]?([^'";\s]+)['"]?/,
   } as const;
   
   for (const file of shellFiles) {
@@ -96,6 +99,7 @@ function saveShellKeysToSettings(shellKeys: ApiKeys): void {
       cerebrasApiKey: 'cerebrasApiKey',
       perplexityApiKey: 'perplexityApiKey',
       openaiApiKey: 'openaiApiKey',
+      ollamaBaseUrl: 'ollamaBaseUrl',
     };
     
     for (const [apiKeyName, settingsKeyName] of Object.entries(keyMappings)) {
@@ -159,6 +163,7 @@ export function loadApiKeys(): ApiKeys {
       cerebrasApiKey: process.env.CEREBRAS_API_KEY,
       perplexityApiKey: process.env.PERPLEXITY_API_KEY,
       openaiApiKey: process.env.OPENAI_API_KEY,
+      ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
     };
     
     // Check shell files for exported variables
@@ -180,6 +185,7 @@ export function loadApiKeys(): ApiKeys {
         cerebrasApiKey: settings.cerebrasApiKey,
         perplexityApiKey: settings.perplexityApiKey,
         openaiApiKey: settings.openaiApiKey,
+        ollamaBaseUrl: settings.ollamaBaseUrl,
       };
     }
     
@@ -193,6 +199,7 @@ export function loadApiKeys(): ApiKeys {
       cerebrasApiKey: envKeys.cerebrasApiKey || shellKeys.cerebrasApiKey || settingsKeys.cerebrasApiKey,
       perplexityApiKey: envKeys.perplexityApiKey || shellKeys.perplexityApiKey || settingsKeys.perplexityApiKey,
       openaiApiKey: envKeys.openaiApiKey || shellKeys.openaiApiKey || settingsKeys.openaiApiKey,
+      ollamaBaseUrl: envKeys.ollamaBaseUrl || shellKeys.ollamaBaseUrl || settingsKeys.ollamaBaseUrl || 'http://localhost:11434',
     };
   } catch (error) {
     return {};

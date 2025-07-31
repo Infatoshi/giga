@@ -61,6 +61,17 @@ program
 
         const agent = new GigaAgent('', '');
         
+        // Check if a model is configured
+        const currentModel = agent.getCurrentModel();
+        if (!currentModel) {
+          console.error("❌ No model configured. Please set up giga first:");
+          console.error("1. Run 'giga' to enter interactive mode");
+          console.error("2. Configure API keys: /providers");
+          console.error("3. Add models: /add-model");
+          console.error("4. Select a model: /models");
+          process.exit(1);
+        }
+        
         console.log(`🤖 Processing prompt: ${options.prompt}`);
         console.log(`📁 Working directory: ${process.cwd()}\n`);
 

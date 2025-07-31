@@ -1,6 +1,8 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { EventEmitter } from 'events';
+import { modeManager } from './mode-manager';
+import { AgentMode } from '../types';
 
 const execAsync = promisify(exec);
 
@@ -48,11 +50,39 @@ export class ConfirmationService extends EventEmitter {
       return { confirmed: true };
     }
 
-    // Check session flags
-    if (this.sessionFlags.allOperations || 
-        (operationType === 'file' && this.sessionFlags.fileOperations) ||
-        (operationType === 'bash' && this.sessionFlags.bashCommands)) {
-      return { confirmed: true };
+    // In GIGA mode, only ask if user previously set session flags or if explicitly configured
+    const currentMode = modeManager.getCurrentMode();
+    if (currentMode === AgentMode.GIGA) {
+      // Check session flags
+      if (this.sessionFlags.allOperations || 
+          (operationType === 'file' && this.sessionFlags.fileOperations) ||
+          (operationType === 'bash' && this.sessionFlags.bashCommands)) {
+        return { confirmed: true };
+      }
+      // In GIGA mode, default behavior is usually to not ask (unless configured otherwise)
+      // For now, we'll keep the original behavior and let tools decide
+    }
+
+    // In CHILL mode, always ask for confirmation unless user has set session flags
+    if (currentMode === AgentMode.CHILL) {
+      // Check session flags first
+      if (this.sessionFlags.allOperations || 
+          (operationType === 'file' && this.sessionFlags.fileOperations) ||
+          (operationType === 'bash' && this.sessionFlags.bashCommands)) {
+        return { confirmed: true };
+      }
+      // In CHILL mode, we need to ask for confirmation
+    }
+
+    // In PLAN mode, generally approve basic operations but still respect session flags
+    if (currentMode === AgentMode.PLAN) {
+      if (this.sessionFlags.allOperations || 
+          (operationType === 'file' && this.sessionFlags.fileOperations) ||
+          (operationType === 'bash' && this.sessionFlags.bashCommands)) {
+        return { confirmed: true };
+      }
+      // For PLAN mode, we might want to be more permissive for read operations
+      // but still ask for write operations - the individual tools can decide
     }
 
     // If VS Code should be opened, try to open it

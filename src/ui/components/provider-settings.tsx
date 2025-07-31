@@ -28,6 +28,7 @@ interface UserSettings {
   cerebrasApiKey?: string;
   perplexityApiKey?: string;
   openaiApiKey?: string;
+  ollamaBaseUrl?: string;
 }
 
 export default function ProviderSettings({ providers, selectedIndex: initialSelectedIndex, onClose }: ProviderSettingsProps) {
@@ -262,11 +263,6 @@ export default function ProviderSettings({ providers, selectedIndex: initialSele
           const hasValidationError = validationErrors[provider.name];
           const isValid = validationStatus[provider.name];
           
-          // Debug logging for the specific case
-          if (provider.name.toLowerCase() === 'groq' && hasValidationError) {
-            console.log('Groq validation error:', JSON.stringify(hasValidationError));
-          }
-          
           let borderColor = "gray";
           if (isSelected) borderColor = "blue";
           else if (isEditing) borderColor = "green";
@@ -289,7 +285,7 @@ export default function ProviderSettings({ providers, selectedIndex: initialSele
                   ) : (
                     <Box>
                       <Text color="gray">
-                        {currentKey ? maskApiKey(currentKey) : "Not configured"}
+                        {currentKey ? (provider.keyName === 'ollamaBaseUrl' ? currentKey : maskApiKey(currentKey)) : "Not configured"}
                       </Text>
                       {isValid && !hasValidationError && (
                         <Text color="green"> ✓</Text>
@@ -301,9 +297,9 @@ export default function ProviderSettings({ providers, selectedIndex: initialSele
                   <Text color="gray" dimColor>{provider.description}</Text>
                 </Box>
               </Box>
-              {hasValidationError && (
+              {hasValidationError && String(hasValidationError).trim() && (
                 <Box paddingLeft={2}>
-                  <Text color="red">❌ {String(hasValidationError).trim() || "Validation error"}</Text>
+                  <Text color="red">❌ {String(hasValidationError).trim()}</Text>
                 </Box>
               )}
             </Box>
@@ -320,8 +316,8 @@ export default function ProviderSettings({ providers, selectedIndex: initialSele
       <Box flexDirection="column" marginTop={1}>
         {editingIndex !== null ? (
           <>
-            <Text color="yellow">Editing {providers[editingIndex].name} API Key:</Text>
-            <Text color="gray" dimColor>• Type your API key</Text>
+            <Text color="yellow">Editing {providers[editingIndex].name} {providers[editingIndex].keyName === 'ollamaBaseUrl' ? 'Base URL' : 'API Key'}:</Text>
+            <Text color="gray" dimColor>• Type your {providers[editingIndex].keyName === 'ollamaBaseUrl' ? 'Ollama base URL (e.g., http://localhost:11434)' : 'API key'}</Text>
             <Text color="gray" dimColor>• Press Enter to save</Text>
             <Text color="gray" dimColor>• Press Esc to cancel</Text>
           </>
