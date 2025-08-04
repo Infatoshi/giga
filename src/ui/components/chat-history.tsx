@@ -100,7 +100,18 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
               return "Updated Todo";
             case "perplexity_search":
               return "Search";
+            case "call_mcp_tool":
+              return "MCP";
             default:
+              // Handle dynamic MCP tools (mcp_{serverName}_{toolName})
+              if (toolName.startsWith("mcp_")) {
+                const parts = toolName.split("_");
+                if (parts.length >= 3) {
+                  const serverName = parts[1];
+                  const actualToolName = parts.slice(2).join("_");
+                  return `MCP:${serverName}`;
+                }
+              }
               return "Tool";
           }
         };
@@ -109,6 +120,7 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
           if (toolCall?.function?.arguments) {
             try {
               const args = JSON.parse(toolCall.function.arguments);
+              
               // Handle todo tools and search tools specially - they don't have file paths
               if (
                 toolCall.function.name === "create_todo_list" ||
@@ -120,6 +132,23 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
                 }
                 return "";
               }
+              
+              // Handle MCP tools
+              if (toolCall.function.name === "call_mcp_tool") {
+                return args.tool_name || "unknown_tool";
+              }
+              
+              // Handle dynamic MCP tools (mcp_{serverName}_{toolName})
+              if (toolCall.function.name.startsWith("mcp_")) {
+                const parts = toolCall.function.name.split("_");
+                if (parts.length >= 3) {
+                  const actualToolName = parts.slice(2).join("_");
+                  // Try to get a meaningful parameter for display
+                  const displayParam = args.libraryName || args.library || args.query || args.path || args.url || actualToolName;
+                  return displayParam;
+                }
+              }
+              
               return args.path || args.file_path || args.command || "unknown";
             } catch {
               return "unknown";
@@ -180,6 +209,6 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
   };
 
   return (
-    <Box flexDirection="column">{entries.slice(-20).map(renderChatEntry)}</Box>
+    <Box flexDirection="column">{entries.map(renderChatEntry)}</Box>
   );
 }

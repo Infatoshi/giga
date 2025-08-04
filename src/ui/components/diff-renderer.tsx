@@ -2,7 +2,7 @@
  * Professional diff renderer component
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Colors } from '../utils/colors';
 import crypto from 'crypto';
@@ -16,6 +16,7 @@ interface DiffLine {
   content: string;
 }
 
+// Parsing function for expensive diff computation
 function parseDiffWithLineNumbers(diffContent: string): DiffLine[] {
   const lines = diffContent.split('\n');
   const result: DiffLine[] = [];
@@ -95,7 +96,8 @@ interface DiffRendererProps {
 
 const DEFAULT_TAB_WIDTH = 4; // Spaces per tab for normalization
 
-export const DiffRenderer = ({
+// Memoized DiffRenderer component with shallow prop comparison
+export const DiffRenderer = React.memo(({
   diffContent,
   filename,
   tabWidth = DEFAULT_TAB_WIDTH,
@@ -115,23 +117,35 @@ export const DiffRenderer = ({
     actualDiffContent = lines.slice(1).join('\n');
   }
   
-  const parsedLines = parseDiffWithLineNumbers(actualDiffContent);
+  // Use memoized parsing with content hash for caching
+  const contentHash = useMemo(() => 
+    crypto.createHash('sha1').update(actualDiffContent).digest('hex'),
+    [actualDiffContent]
+  );
+  
+  const parsedLines = useMemo(() => 
+    parseDiffWithLineNumbers(actualDiffContent),
+    [actualDiffContent]
+  );
 
   if (parsedLines.length === 0) {
     return <Text dimColor>No changes detected.</Text>;
   }
 
-  // Always render as diff format to show line numbers and + signs
-  const renderedOutput = renderDiffContent(
+  // Memoize expensive render computation
+  const renderedOutput = useMemo(() => renderDiffContent(
     parsedLines,
     filename,
     tabWidth,
     availableTerminalHeight,
     terminalWidth,
-  );
+  ), [parsedLines, filename, tabWidth, availableTerminalHeight, terminalWidth]);
 
   return <>{renderedOutput}</>;
-};
+});
+
+// Add display name for better debugging
+DiffRenderer.displayName = 'DiffRenderer';
 
 const renderDiffContent = (
   parsedLines: DiffLine[],
@@ -171,7 +185,7 @@ const renderDiffContent = (
   }
 
   const key = filename
-    ? `diff-box-${filename}`
+    ? `diff-box-${filename}-${crypto.createHash('sha1').update(JSON.stringify(parsedLines)).digest('hex')}`
     : `diff-box-${crypto.createHash('sha1').update(JSON.stringify(parsedLines)).digest('hex')}`;
 
   let lastLineNumber: number | null = null;

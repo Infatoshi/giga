@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useInput, useApp } from "ink";
 import { GigaAgent, ChatEntry } from "../agent/giga-agent";
 import { ConfirmationService } from "../utils/confirmation-service";
@@ -6,6 +6,7 @@ import { loadAddedModels } from "../utils/added-models";
 import { loadAddedMcpServers, AddedMcpServer } from "../utils/added-mcp-servers";
 import { fuzzySearch } from "../utils/fuzzy-search";
 import { getInstanceAvailableModels, onModelSelected } from "../utils/instance-models";
+import { getAllFiles, extractFileQuery, replaceFileQuery, getFilteredItems, FileInfo } from "../utils/file-finder";
 import { OpenRouterProvider, isOpenRouterModel } from "../utils/openrouter-providers";
 import { setOpenRouterProvider, getOpenRouterProvider } from "../utils/added-models";
 import { sessionManager } from "../utils/session-manager";
@@ -98,6 +99,55 @@ export function useInputHandler({
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [temporaryInput, setTemporaryInput] = useState("");
+  
+  // File finder state
+  const [showFileFinder, setShowFileFinder] = useState(false);
+  const [selectedFileIndex, setSelectedFileIndex] = useState(0);
+  const [availableFiles, setAvailableFiles] = useState<FileInfo[]>([]);
+  const [filteredFiles, setFilteredFiles] = useState<string[]>([]);
+  const [fileQuery, setFileQuery] = useState("");
+  
+  // Streaming content batching state
+  const streamingBufferRef = useRef<string>("");
+  const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Double Ctrl+C detection as fallback
+  const lastCtrlCRef = useRef<number>(0);
+  const ctrlCTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Batched state update for streaming content
+  const flushStreamingBuffer = useCallback(() => {
+    if (streamingBufferRef.current) {
+      const content = streamingBufferRef.current;
+      streamingBufferRef.current = "";
+      
+      setChatHistory((prev) =>
+        prev.map((entry, idx) =>
+          idx === prev.length - 1 && entry.isStreaming
+            ? { ...entry, content: entry.content + content }
+            : entry
+        )
+      );
+    }
+    
+    if (batchTimeoutRef.current) {
+      clearTimeout(batchTimeoutRef.current);
+      batchTimeoutRef.current = null;
+    }
+  }, [setChatHistory]);
+
+  // Debounced streaming content update
+  const addStreamingContent = useCallback((content: string) => {
+    streamingBufferRef.current += content;
+    
+    if (batchTimeoutRef.current) {
+      clearTimeout(batchTimeoutRef.current);
+    }
+    
+    batchTimeoutRef.current = setTimeout(() => {
+      setImmediate(flushStreamingBuffer);
+    }, 16); // 16ms debounce for ~60fps updates
+  }, [flushStreamingBuffer]);
 
   // Helper function to add command to history
   const addToHistory = (command: string) => {
@@ -168,6 +218,56 @@ export function useInputHandler({
     setShowExpertModels(false);
   };
 
+  const closeFileFinder = () => {
+    setShowFileFinder(false);
+    setSelectedFileIndex(0);
+    setFilteredFiles([]);
+    setFileQuery("");
+  };
+
+  const updateFileFinder = (currentInput: string) => {
+    const queryInfo = extractFileQuery(currentInput);
+    if (queryInfo) {
+      const { query, isDirectory } = queryInfo;
+      setFileQuery(query);
+      
+      if (isDirectory) {
+        // Handle directory search - use simple filtering
+        const filtered = getFilteredItems(availableFiles, query, true);
+        setFilteredFiles(filtered);
+        setShowFileFinder(true); // Always show when @ query is active
+        setSelectedFileIndex(0);
+      } else {
+        // Handle file search
+        if (query === '') {
+          // Just @ typed, show recent/common files
+          const recentFiles = availableFiles
+            .filter(file => !file.isDirectory)
+            .map(file => file.relativePath)
+            .sort()
+            .slice(0, 10);
+          setFilteredFiles(recentFiles);
+        } else {
+          // Use fuzzy search for better matching
+          const filtered = fuzzySearch(
+            query,
+            availableFiles.filter(file => !file.isDirectory),
+            (file) => file.relativePath,
+            10
+          ).map(file => file.relativePath);
+          setFilteredFiles(filtered);
+        }
+        
+        setShowFileFinder(true); // Always show when @ query is active
+        setSelectedFileIndex(0);
+      }
+    } else {
+      setShowFileFinder(false);
+      setFilteredFiles([]);
+      setFileQuery("");
+    }
+  };
+
   const refreshModels = () => {
     const instanceModels = getInstanceAvailableModels();
     const modelOptions: ModelOption[] = instanceModels.map(model => ({
@@ -204,13 +304,35 @@ export function useInputHandler({
     refreshModels();
     refreshMcpServers();
     setCurrentTemperature(sessionManager.getTemperature());
+    
+    // Load available files
+    try {
+      const files = getAllFiles();
+      setAvailableFiles(files);
+    } catch (error) {
+      console.error('Failed to load files:', error);
+    }
+    
+    // Cleanup function to clear any pending timeouts
+    return () => {
+      if (batchTimeoutRef.current) {
+        clearTimeout(batchTimeoutRef.current);
+        batchTimeoutRef.current = null;
+      }
+      if (ctrlCTimeoutRef.current) {
+        clearTimeout(ctrlCTimeoutRef.current);
+        ctrlCTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   const { exit } = useApp();
 
   const commandSuggestions: CommandSuggestion[] = [
     { command: "/help", description: "Show help information" },
-    { command: "/clear", description: "Clear chat history" },
+    { command: "/intro", description: "Show getting started information" },
+    { command: "/clear", description: "Start new conversation" },
+    { command: "/rag", description: "Configure RAG settings" },
     { command: "/history", description: "Browse conversation history" },
     { command: "/models", description: "Switch Grok Model" },
     { command: "/route", description: "Configure model provider routing" },
@@ -246,6 +368,22 @@ export function useInputHandler({
     const trimmedInput = input.trim();
 
     if (trimmedInput === "/clear") {
+      // Clear console and show GIGA art again
+      console.clear();
+      
+      const cfonts = require('cfonts');
+      cfonts.say("GIGA", {
+        font: "3d",
+        align: "left",
+        colors: ["magenta", "gray"],
+        space: true,
+        maxLength: "0",
+        gradient: ["magenta", "cyan"],
+        independentGradient: false,
+        transitionGradient: true,
+        env: "node",
+      });
+      
       // Reset chat history
       setChatHistory([]);
       
@@ -265,14 +403,34 @@ export function useInputHandler({
       return true;
     }
 
+    if (trimmedInput === "/intro") {
+      const introEntry: ChatEntry = {
+        type: "assistant",
+        content: `Getting started:
+1. First time? Configure API keys: /providers
+2. Add models from your providers: /add-model
+3. Select your preferred model: /models
+4. Ask questions, edit files, or run commands!
+
+Need help? Type /help for more information.`,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, introEntry]);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
     if (trimmedInput === "/help") {
       const helpEntry: ChatEntry = {
         type: "assistant",
         content: `GIGA Help:
 
 Built-in Commands:
-  /clear        - Clear chat history
+  /clear        - Start new conversation
   /help         - Show this help
+  /intro        - Show getting started information
+  /rag          - Configure RAG settings
   /history      - Browse conversation history (Ctrl+H)
   /models       - Switch models
   /route        - Configure model provider routing
@@ -415,6 +573,92 @@ Examples:
       return true;
     }
 
+    if (trimmedInput === "/rag") {
+      const { GlobalSettingsManager } = require('../utils/global-settings');
+      const { RAGSettingsManager } = require('../utils/rag-settings');
+      
+      const globalSettings = GlobalSettingsManager.getInstance();
+      const ragSettings = RAGSettingsManager.getInstance();
+      const currentSettings = globalSettings.getSettings();
+      const indexStatus = await ragSettings.getIndexStatus();
+      
+      const ragEntry: ChatEntry = {
+        type: "assistant",
+        content: `**RAG Configuration**\n\n` +
+          `📚 **Status**: ${currentSettings.ragEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
+          `🔍 **Index Status**: ${indexStatus.isIndexed ? `${indexStatus.chunkCount} documents indexed` : 'Not indexed'}\n\n` +
+          `**Commands:**\n` +
+          `• Type \`/rag on\` to enable RAG\n` +
+          `• Type \`/rag off\` to disable RAG\n` +
+          `• Type \`/rag status\` to view detailed status\n\n` +
+          `${currentSettings.ragEnabled ? '📚 Loaded ' + (indexStatus.chunkCount || 0) + ' documents from index\n✅ RAG service initialized with file-based storage\n✅ RAG context service initialized successfully' : ''}`,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, ragEntry]);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/rag on") {
+      const { GlobalSettingsManager } = require('../utils/global-settings');
+      const globalSettings = GlobalSettingsManager.getInstance();
+      globalSettings.setRagEnabled(true);
+      
+      const ragEntry: ChatEntry = {
+        type: "assistant",
+        content: `✅ RAG enabled globally. RAG features will be available in new sessions.`,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, ragEntry]);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/rag off") {
+      const { GlobalSettingsManager } = require('../utils/global-settings');
+      const globalSettings = GlobalSettingsManager.getInstance();
+      globalSettings.setRagEnabled(false);
+      
+      const ragEntry: ChatEntry = {
+        type: "assistant",
+        content: `❌ RAG disabled globally. RAG features will not be available in new sessions.`,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, ragEntry]);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/rag status") {
+      const { GlobalSettingsManager } = require('../utils/global-settings');
+      const { RAGSettingsManager } = require('../utils/rag-settings');
+      
+      const globalSettings = GlobalSettingsManager.getInstance();
+      const ragSettings = RAGSettingsManager.getInstance();
+      const currentSettings = globalSettings.getSettings();
+      const indexStatus = await ragSettings.getIndexStatus();
+      
+      const ragEntry: ChatEntry = {
+        type: "assistant",
+        content: `**RAG Detailed Status**\n\n` +
+          `📚 **Global Status**: ${currentSettings.ragEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
+          `🔍 **Index Status**: ${indexStatus.isIndexed ? 'Indexed' : 'Not indexed'}\n` +
+          `📄 **Document Count**: ${indexStatus.chunkCount || 0}\n\n` +
+          `**Initialization Logs:**\n` +
+          `📚 Loaded ${indexStatus.chunkCount || 0} documents from index\n` +
+          `✅ RAG service initialized with file-based storage\n` +
+          `✅ RAG context service initialized successfully`,
+        timestamp: new Date(),
+      };
+      setChatHistory((prev) => [...prev, ragEntry]);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
     if (trimmedInput.startsWith("/models ")) {
       const modelArg = trimmedInput.split(" ")[1];
       const modelNames = dynamicModels.map(m => m.model);
@@ -524,13 +768,8 @@ Available models: ${modelNames.join(", ")}`,
                 setChatHistory((prev) => [...prev, newStreamingEntry]);
                 streamingEntry = newStreamingEntry;
               } else {
-                setChatHistory((prev) =>
-                  prev.map((entry, idx) =>
-                    idx === prev.length - 1 && entry.isStreaming
-                      ? { ...entry, content: entry.content + chunk.content }
-                      : entry
-                  )
-                );
+                // Use batched streaming content update
+                addStreamingContent(chunk.content);
               }
             }
             break;
@@ -576,6 +815,9 @@ Available models: ${modelNames.join(", ")}`,
             break;
 
           case "done":
+            // Flush any remaining buffered content
+            flushStreamingBuffer();
+            
             if (streamingEntry) {
               setChatHistory((prev) =>
                 prev.map((entry) =>
@@ -752,9 +994,38 @@ Available models: ${modelNames.join(", ")}`,
       return;
     }
     
+    // Fallback double Ctrl+C detection in case process-level handler doesn't work
     if (key.ctrl && inputChar === "c") {
-      exit();
-      return;
+      const now = Date.now();
+      const timeSinceLastCtrlC = now - lastCtrlCRef.current;
+      
+      if (timeSinceLastCtrlC < 1000 && lastCtrlCRef.current > 0) {
+        // Second Ctrl+C within 1 second - exit immediately
+        if (ctrlCTimeoutRef.current) {
+          clearTimeout(ctrlCTimeoutRef.current);
+          ctrlCTimeoutRef.current = null;
+        }
+        console.log('\n👋 Goodbye! (from useInput)');
+        exit();
+        return;
+      } else {
+        // First Ctrl+C or too late - show message and start timer
+        lastCtrlCRef.current = now;
+        console.log('\nPress Ctrl+C again within 1 second to exit (useInput)');
+        
+        // Clear any existing timeout
+        if (ctrlCTimeoutRef.current) {
+          clearTimeout(ctrlCTimeoutRef.current);
+        }
+        
+        // Reset the timer after 1 second
+        ctrlCTimeoutRef.current = setTimeout(() => {
+          lastCtrlCRef.current = 0;
+          ctrlCTimeoutRef.current = null;
+        }, 1000);
+        
+        return;
+      }
     }
 
     // Handle Shift+Tab for mode cycling
@@ -942,6 +1213,29 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
       return;
     }
 
+    // Handle file finder navigation when active (takes precedence over history)
+    if (showFileFinder && filteredFiles.length > 0) {
+      if (key.upArrow) {
+        setSelectedFileIndex((prev) =>
+          prev === 0 ? filteredFiles.length - 1 : prev - 1
+        );
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedFileIndex((prev) => (prev + 1) % filteredFiles.length);
+        return;
+      }
+      if (key.return || key.tab) {
+        const selectedFile = filteredFiles[selectedFileIndex];
+        if (selectedFile) {
+          const newInput = replaceFileQuery(input, selectedFile);
+          setInput(newInput);
+          closeFileFinder();
+        }
+        return;
+      }
+    }
+
     // Handle command history navigation with up/down arrows
     if (key.upArrow && !showCommandSuggestions && !showModelSelection && !showMcpServers) {
       if (commandHistory.length > 0) {
@@ -998,6 +1292,9 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
         setTemporaryInput("");
       }
 
+      // Update file finder
+      updateFileFinder(newInput);
+
       if (!newInput.startsWith("/")) {
         setShowCommandSuggestions(false);
         setSelectedCommandIndex(0);
@@ -1017,6 +1314,9 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
         setHistoryIndex(-1);
         setTemporaryInput("");
       }
+
+      // Update file finder based on @ symbol
+      updateFileFinder(newInput);
 
       if (
         newInput === "/" ||
@@ -1069,6 +1369,10 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
     currentSelectedModel,
     routeProviders,
     isLoadingProviders,
+    showFileFinder,
+    selectedFileIndex,
+    filteredFiles,
+    fileQuery,
     commandSuggestions,
     availableModels: dynamicModels,
     mcpServers,
@@ -1086,6 +1390,7 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
     closeTemperatureSelector,
     closeExpertModels,
     closeRouteSelection,
+    closeFileFinder,
     refreshModels,
     refreshMcpServers,
     openRouterModels: getOpenRouterModels(dynamicModels),

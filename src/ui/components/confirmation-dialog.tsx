@@ -107,67 +107,46 @@ export default function ConfirmationDialog({
   }
 
   return (
-    <Box flexDirection="column">
-      {/* Tool use header - styled like chat history */}
-      <Box marginTop={1}>
-        <Box>
-          <Text color="magenta">⏺</Text>
-          <Text color="white">
-            {" "}
-            {operation}({filename})
-          </Text>
-        </Box>
+    <Box flexDirection="column" borderStyle="round" borderColor="yellow" padding={1}>
+      {/* Compact header */}
+      <Box marginBottom={1}>
+        <Text color="yellow" bold>⚠️  Confirm: </Text>
+        <Text color="white">{operation}({filename})</Text>
       </Box>
 
-      <Box marginLeft={2} flexDirection="column">
-        <Text color="gray">⎿ Requesting user confirmation</Text>
-
-        {showVSCodeOpen && (
-          <Box marginTop={1}>
-            <Text color="gray">⎿ Opened changes in Visual Studio Code ⧉</Text>
-          </Box>
-        )}
-
-        {/* Show content preview if provided */}
-        {content && (
-          <>
-            <Text color="gray">⎿ {content.split('\n')[0]}</Text>
-            <Box marginLeft={4} flexDirection="column">
-              <DiffRenderer
-                diffContent={content}
-                filename={filename}
-                terminalWidth={80}
-              />
-            </Box>
-          </>
-        )}
-      </Box>
-
-      {/* Confirmation options */}
-      <Box flexDirection="column" marginTop={1}>
+      {/* Show VSCode notice if applicable */}
+      {showVSCodeOpen && (
         <Box marginBottom={1}>
-          <Text>Do you want to proceed with this operation?</Text>
+          <Text color="gray">📝 Opened in VS Code</Text>
         </Box>
+      )}
 
-        <Box flexDirection="column">
-          {options.map((option, index) => (
-            <Box key={index} paddingLeft={1}>
-              <Text
-                color={selectedOption === index ? "black" : "white"}
-                backgroundColor={selectedOption === index ? "cyan" : undefined}
-              >
-                {index + 1}. {option}
-              </Text>
-            </Box>
-          ))}
-        </Box>
-
-        <Box marginTop={1}>
-          <Text color="gray" dimColor>
-            ↑↓ navigate • Enter select • Esc cancel
+      {/* Compact content preview - only show first few lines */}
+      {content && (
+        <Box marginBottom={1}>
+          <Text color="gray" wrap="truncate">
+            📄 {content.split('\n').slice(0, 2).join(' ').substring(0, 60)}...
           </Text>
         </Box>
+      )}
+
+      {/* Vertical confirmation options */}
+      <Box flexDirection="column" marginBottom={1}>
+        {options.map((option, index) => (
+          <Box key={index}>
+            <Text
+              color={selectedOption === index ? "black" : "gray"}
+              backgroundColor={selectedOption === index ? "cyan" : undefined}
+            >
+              [{index + 1}] {option}
+            </Text>
+          </Box>
+        ))}
       </Box>
+
+      <Text color="gray" dimColor>
+        ↑↓/Tab select • Enter confirm • Esc cancel
+      </Text>
     </Box>
   );
 }

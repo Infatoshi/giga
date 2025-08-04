@@ -151,7 +151,11 @@ export class McpClient {
         this.serverInfo.resources = resourcesResponse.resources;
       }
     } catch (error) {
-      console.warn('Failed to get resources list:', error);
+      // Many MCP servers don't implement resources/list - silently ignore "Method not found" errors
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('Method not found')) {
+        console.warn('Failed to get resources list:', error);
+      }
       this.serverInfo.resources = [];
     }
   }
@@ -175,8 +179,8 @@ export class McpClient {
 
   private sendRequest(method: string, params: any): Promise<any> {
     return new Promise((resolve, reject) => {
-      if (!this.process || !this.isConnected) {
-        reject(new Error('MCP client not connected'));
+      if (!this.process) {
+        reject(new Error('MCP client process not started'));
         return;
       }
 
@@ -204,7 +208,7 @@ export class McpClient {
   }
 
   private sendNotification(method: string, params: any): void {
-    if (!this.process || !this.isConnected) {
+    if (!this.process) {
       return;
     }
 

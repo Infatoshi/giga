@@ -50,17 +50,11 @@ export class ConfirmationService extends EventEmitter {
       return { confirmed: true };
     }
 
-    // In GIGA mode, only ask if user previously set session flags or if explicitly configured
+    // In GIGA mode, default to no confirmations (full power mode)
     const currentMode = modeManager.getCurrentMode();
     if (currentMode === AgentMode.GIGA) {
-      // Check session flags
-      if (this.sessionFlags.allOperations || 
-          (operationType === 'file' && this.sessionFlags.fileOperations) ||
-          (operationType === 'bash' && this.sessionFlags.bashCommands)) {
-        return { confirmed: true };
-      }
-      // In GIGA mode, default behavior is usually to not ask (unless configured otherwise)
-      // For now, we'll keep the original behavior and let tools decide
+      // GIGA mode = full power, no permission requests by default
+      return { confirmed: true };
     }
 
     // In CHILL mode, always ask for confirmation unless user has set session flags

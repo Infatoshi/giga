@@ -2,7 +2,7 @@ import { AgentMode, ModeConfig } from '../types';
 
 export class ModeManager {
   private static instance: ModeManager;
-  private currentMode: AgentMode = AgentMode.GIGA;
+  private currentMode: AgentMode = AgentMode.CHILL;
   private modeConfigs: Record<AgentMode, ModeConfig> = {
     [AgentMode.PLAN]: {
       mode: AgentMode.PLAN,

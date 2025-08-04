@@ -16,6 +16,8 @@ dotenv.config();
 
 import { loadApiKeys } from "./utils/api-keys";
 
+// We'll set up the double Ctrl+C handler after Ink starts
+
 // Check if any API keys are available from environment variables, shell files, or settings
 function hasAnyApiKey(): boolean {
   const apiKeys = loadApiKeys();
@@ -103,7 +105,45 @@ program
 
         console.log("🤖 Starting GIGA Conversational Assistant...\n");
 
-        render(React.createElement(ChatInterface, { agent }));
+        const app = render(React.createElement(ChatInterface, { agent }));
+
+        // Set up double Ctrl+C handler after Ink is running
+        let lastCtrlCTime = 0;
+        let ctrlCTimeout: NodeJS.Timeout | null = null;
+
+        // Remove any existing SIGINT listeners first
+        process.removeAllListeners('SIGINT');
+
+        process.on('SIGINT', () => {
+          const now = Date.now();
+          const timeSinceLastCtrlC = now - lastCtrlCTime;
+          
+          if (timeSinceLastCtrlC < 1000 && lastCtrlCTime > 0) {
+            // Second Ctrl+C within 1 second - exit immediately
+            if (ctrlCTimeout) {
+              clearTimeout(ctrlCTimeout);
+              ctrlCTimeout = null;
+            }
+            console.log('\n👋 Goodbye!');
+            app.unmount();
+            process.exit(0);
+          } else {
+            // First Ctrl+C or too late - show message and start timer
+            lastCtrlCTime = now;
+            console.log('\nPress Ctrl+C again within 1 second to exit');
+            
+            // Clear any existing timeout
+            if (ctrlCTimeout) {
+              clearTimeout(ctrlCTimeout);
+            }
+            
+            // Reset the timer after 1 second
+            ctrlCTimeout = setTimeout(() => {
+              lastCtrlCTime = 0;
+              ctrlCTimeout = null;
+            }, 1000);
+          }
+        });
       } catch (error: any) {
         console.error("❌ Error initializing GIGA:", error.message);
         process.exit(1);

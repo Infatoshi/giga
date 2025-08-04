@@ -20,6 +20,7 @@ import { McpServerSelection } from "./mcp-server-selection";
 import { ChatHistory } from "./chat-history";
 import { ConversationHistory } from "./conversation-history";
 import { ChatInput } from "./chat-input";
+import { FileFinder } from "./file-finder";
 import ConfirmationDialog from "./confirmation-dialog";
 import { ConfirmationService, ConfirmationOptions } from "../../utils/confirmation-service";
 import ApiKeyInput from "./api-key-input";
@@ -31,28 +32,30 @@ import { loadApiKeys } from "../../utils/api-keys";
 import { sessionManager } from "../../utils/session-manager";
 import { modeManager } from "../../utils/mode-manager";
 import { AgentMode } from "../../types";
+import { loadAddedMcpServers } from "../../utils/added-mcp-servers";
+import { GlobalSettingsManager } from "../../utils/global-settings";
 import cfonts from "cfonts";
+
+// Memoized ChatHistory component to prevent unnecessary re-renders
+const ChatHistoryMemo = React.memo(ChatHistory);
 
 interface ChatInterfaceProps {
   agent?: GigaAgent;
 }
 
-// Component showing session info and API key status
+// Component showing session info and mode status
 function SessionStatus({ currentModel, currentMode }: { currentModel?: string, currentMode?: AgentMode }) {
-  const apiKeys = loadApiKeys();
   const sessionInfo = sessionManager.getSessionInfo();
   const displayModel = currentModel || sessionInfo?.currentModel || '';
   const noModelConfigured = !displayModel || displayModel.trim() === '';
-  const providers = [
-    { name: "xAI", key: apiKeys.xaiApiKey },
-    { name: "Groq", key: apiKeys.groqApiKey },
-    { name: "Anthropic", key: apiKeys.anthropicApiKey },
-    { name: "OpenRouter", key: apiKeys.openRouterApiKey },
-    { name: "Google", key: apiKeys.googleApiKey },
-    { name: "Cerebras", key: apiKeys.cerebrasApiKey },
-    { name: "Perplexity", key: apiKeys.perplexityApiKey },
-    { name: "OpenAI", key: apiKeys.openaiApiKey },
-  ];
+  
+  // Get MCP server status
+  const mcpServers = loadAddedMcpServers();
+  const enabledMcpCount = mcpServers.filter(server => server.enabled).length;
+  
+  // Get RAG status
+  const globalSettings = GlobalSettingsManager.getInstance();
+  const ragEnabled = globalSettings.isRagEnabled();
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -65,6 +68,10 @@ function SessionStatus({ currentModel, currentMode }: { currentModel?: string, c
         ) : (
           <Text bold color="cyan">{displayModel || 'Unknown'}</Text>
         )}
+        <Text color="gray"> | MCPs: </Text>
+        <Text color={enabledMcpCount > 0 ? "green" : "red"}>{enabledMcpCount}</Text>
+        <Text color="gray"> | RAG: </Text>
+        <Text color={ragEnabled ? "green" : "red"}>{ragEnabled ? "ON" : "OFF"}</Text>
       </Box>
       
       <Box marginBottom={1}>
@@ -82,17 +89,6 @@ function SessionStatus({ currentModel, currentMode }: { currentModel?: string, c
           <Text color="gray">3. Select a model: /models</Text>
         </Box>
       )}
-      
-      <Text bold color="cyan">API Key Status:</Text>
-      <Box flexDirection="row">
-        {providers.map((provider, index) => (
-          <Box key={index} marginRight={2}>
-            <Text>
-              {provider.key ? "✓" : "✗"} {provider.name}
-            </Text>
-          </Box>
-        ))}
-      </Box>
     </Box>
   );
 }
@@ -141,6 +137,10 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
     currentSelectedModel,
     routeProviders,
     isLoadingProviders,
+    showFileFinder,
+    selectedFileIndex,
+    filteredFiles,
+    fileQuery,
     commandSuggestions,
     availableModels,
     mcpServers,
@@ -158,6 +158,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
     closeTemperatureSelector,
     closeExpertModels,
     closeRouteSelection,
+    closeFileFinder,
     refreshModels,
     refreshMcpServers,
     openRouterModels,
@@ -177,6 +178,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
   });
 
   useEffect(() => {
+    // Only clear and show banner on initial mount, not on re-renders
     console.clear();
     cfonts.say("GIGA", {
       font: "3d",
@@ -190,17 +192,8 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
       env: "node",
     });
 
-    console.log("Getting started:");
-    console.log("1. First time? Configure API keys: /providers");
-    console.log("2. Add models from your providers: /add-model");
-    console.log("3. Select your preferred model: /models");
-    console.log("4. Ask questions, edit files, or run commands!");
-    console.log("");
-    console.log("Need help? Type /help for more information.");
-    console.log("");
-
     setChatHistory([]);
-  }, []);
+  }, []); // Remove dependencies to run only once on mount
 
   useEffect(() => {
     const handleConfirmationRequest = (options: ConfirmationOptions) => {
@@ -446,29 +439,17 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <SessionStatus currentModel={agent.getCurrentModel()} currentMode={currentMode} />
-      
-      <Box flexDirection="column" marginBottom={1}>
-        <Text dimColor>
-          Type your request in natural language. Type 'exit' or Ctrl+C to quit. Shift+Tab to cycle modes.
-        </Text>
-      </Box>
+        <SessionStatus currentModel={agent.getCurrentModel()} currentMode={currentMode} />
+        
+        <Box flexDirection="column" marginBottom={1}>
+          <Text dimColor>
+            Type your request in natural language. Type 'exit' or Ctrl+C to quit. Shift+Tab to cycle modes.
+          </Text>
+        </Box>
 
-      <Box flexDirection="column" ref={scrollRef}>
-        <ChatHistory entries={chatHistory} />
-      </Box>
-
-      {/* Show confirmation dialog if one is pending */}
-      {confirmationOptions && (
-        <ConfirmationDialog
-          operation={confirmationOptions.operation}
-          filename={confirmationOptions.filename}
-          showVSCodeOpen={confirmationOptions.showVSCodeOpen}
-          content={confirmationOptions.content}
-          onConfirm={handleConfirmation}
-          onReject={handleRejection}
-        />
-      )}
+        <Box key="chat-main" flexDirection="column" ref={scrollRef}>
+          <ChatHistoryMemo entries={chatHistory} />
+        </Box>
 
 
       {!confirmationOptions && (
@@ -494,6 +475,15 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
               input={input}
               selectedIndex={selectedCommandIndex}
               isVisible={showCommandSuggestions}
+            />
+          )}
+
+          {!showAddPrompt && !showDeletePrompt && !showPromptsList && (
+            <FileFinder
+              files={filteredFiles}
+              selectedIndex={selectedFileIndex}
+              query={fileQuery}
+              isVisible={showFileFinder}
             />
           )}
 
@@ -621,6 +611,18 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
             />
           )}
         </>
+      )}
+
+      {/* Show confirmation dialog at the bottom if one is pending */}
+      {confirmationOptions && (
+        <ConfirmationDialog
+          operation={confirmationOptions.operation}
+          filename={confirmationOptions.filename}
+          showVSCodeOpen={confirmationOptions.showVSCodeOpen}
+          content={confirmationOptions.content}
+          onConfirm={handleConfirmation}
+          onReject={handleRejection}
+        />
       )}
     </Box>
   );
