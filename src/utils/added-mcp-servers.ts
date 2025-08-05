@@ -22,12 +22,6 @@ interface AddedMcpServersStorage {
 const getStorageFile = (): string => {
   const homeDir = os.homedir();
   const gigaDir = path.join(homeDir, '.giga');
-  
-  // Create .giga directory if it doesn't exist
-  if (!fs.existsSync(gigaDir)) {
-    fs.mkdirSync(gigaDir, { mode: 0o700 });
-  }
-  
   return path.join(gigaDir, 'added-mcp-servers.json');
 };
 

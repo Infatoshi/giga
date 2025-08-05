@@ -122,23 +122,6 @@ export const PROVIDER_MODELS = {
     "qwen2.5-72b-instruct",
   ],
   
-  perplexity: [
-    "llama-3.1-sonar-small-128k-online",
-    "llama-3.1-sonar-large-128k-online",
-    "llama-3.1-sonar-huge-128k-online",
-    "llama-3.1-sonar-small-128k-chat",
-    "llama-3.1-sonar-large-128k-chat",
-    "llama-3.1-8b-instruct",
-    "llama-3.1-70b-instruct",
-    "sonar-small-online",
-    "sonar-medium-online",
-    "sonar-small-chat",
-    "sonar-medium-chat",
-    "sonar",
-    "sonar-pro",
-    "sonar-deep-research",
-  ],
-  
   openai: [
     "gpt-4o",
     "gpt-4o-mini",

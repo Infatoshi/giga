@@ -308,31 +308,22 @@ export class TextEditorTool {
     newLines: string[],
     filePath: string
   ): string {
-    // Count actual changes
+    // Use Myers diff algorithm to find actual changes
+    const lcs = this.findLCS(oldLines, newLines);
+    const changes = this.getChanges(oldLines, newLines, lcs);
+
+    // Count actual changes (not cancelling ones)
     let addedLines = 0;
     let removedLines = 0;
-    let i = 0,
-      j = 0;
+    
+    changes.forEach(change => {
+      if (change.type === 'add') addedLines++;
+      else if (change.type === 'remove') removedLines++;
+    });
 
-    // Simple algorithm to detect changes
-    while (i < oldLines.length || j < newLines.length) {
-      if (
-        i < oldLines.length &&
-        j < newLines.length &&
-        oldLines[i] === newLines[j]
-      ) {
-        i++;
-        j++;
-      } else if (
-        i < oldLines.length &&
-        (j >= newLines.length || oldLines[i] !== newLines[j])
-      ) {
-        removedLines++;
-        i++;
-      } else if (j < newLines.length) {
-        addedLines++;
-        j++;
-      }
+    // If no actual changes (all cancelled out), return empty
+    if (addedLines === 0 && removedLines === 0) {
+      return `No changes to ${filePath}`;
     }
 
     let summary = `Updated ${filePath}`;
@@ -346,45 +337,96 @@ export class TextEditorTool {
       summary += ` with ${removedLines} removal${
         removedLines !== 1 ? "s" : ""
       }`;
-    } else {
-      summary += " with changes";
     }
 
-    // Generate proper git-style diff format
+    // Generate proper git-style unified diff
+    const hunk = this.generateHunk(oldLines, newLines, changes);
+    
     let diff = summary + "\n";
     diff += `--- a/${filePath}\n`;
     diff += `+++ b/${filePath}\n`;
-    diff += `@@ -1,${oldLines.length} +1,${newLines.length} @@\n`;
+    diff += hunk;
 
-    // Generate unified diff
-    i = 0;
-    j = 0;
-    const CONTEXT_LINES = 3;
+    return diff.trim();
+  }
 
-    while (i < oldLines.length || j < newLines.length) {
-      const oldLine = i < oldLines.length ? oldLines[i] : null;
-      const newLine = j < newLines.length ? newLines[j] : null;
+  private findLCS(oldLines: string[], newLines: string[]): number[][] {
+    const m = oldLines.length;
+    const n = newLines.length;
+    const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
 
-      if (oldLine === newLine && oldLine !== null) {
-        // Context line
-        diff += ` ${oldLine}\n`;
-        i++;
-        j++;
-      } else {
-        // Show removed lines
-        if (oldLine !== null) {
-          diff += `-${oldLine}\n`;
-          i++;
-        }
-        // Show added lines
-        if (newLine !== null) {
-          diff += `+${newLine}\n`;
-          j++;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (oldLines[i - 1] === newLines[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
         }
       }
     }
+    return dp;
+  }
 
-    return diff.trim();
+  private getChanges(oldLines: string[], newLines: string[], lcs: number[][]) {
+    const changes: Array<{type: 'add' | 'remove', line: string, index: number}> = [];
+    let i = oldLines.length;
+    let j = newLines.length;
+
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+        i--;
+        j--;
+      } else if (j > 0 && (i === 0 || lcs[i][j - 1] >= lcs[i - 1][j])) {
+        changes.unshift({ type: 'add', line: newLines[j - 1], index: j - 1 });
+        j--;
+      } else if (i > 0 && (j === 0 || lcs[i][j - 1] < lcs[i - 1][j])) {
+        changes.unshift({ type: 'remove', line: oldLines[i - 1], index: i - 1 });
+        i--;
+      }
+    }
+    
+    return changes;
+  }
+
+  private generateHunk(oldLines: string[], newLines: string[], changes: any[]): string {
+    if (changes.length === 0) return "";
+
+    const oldStart = 1;
+    const newStart = 1;
+    const oldCount = oldLines.length;
+    const newCount = newLines.length;
+
+    let hunk = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@\n`;
+
+    // Build the actual diff
+    const result: string[] = [];
+    const lcs = this.findLCS(oldLines, newLines);
+    let oldIndex = 0;
+    let newIndex = 0;
+
+    function backtrack(i: number, j: number) {
+      if (i === 0 && j === 0) return;
+      
+      if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+        backtrack(i - 1, j - 1);
+        result.push(` ${oldLines[i - 1]}`);
+        oldIndex++;
+        newIndex++;
+      } else if (j > 0 && (i === 0 || lcs[i][j - 1] >= lcs[i - 1][j])) {
+        backtrack(i, j - 1);
+        result.push(`+${newLines[j - 1]}`);
+        newIndex++;
+      } else if (i > 0 && (j === 0 || lcs[i][j - 1] < lcs[i - 1][j])) {
+        backtrack(i - 1, j);
+        result.push(`-${oldLines[i - 1]}`);
+        oldIndex++;
+      }
+    }
+
+    backtrack(oldLines.length, newLines.length);
+    hunk += result.join("\n");
+    
+    return hunk;
   }
 
   getEditHistory(): EditorCommand[] {

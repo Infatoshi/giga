@@ -72,7 +72,6 @@ export class GigaClient {
   private openRouterClient: OpenAI;
   private googleClient: OpenAI;
   private cerebrasClient: Cerebras;
-  private perplexityClient: OpenAI;
   private openaiClient: OpenAI;
   private ollamaClient: OpenAI;
   // Remove instance-level currentModel - now managed by sessionManager
@@ -81,7 +80,6 @@ export class GigaClient {
   private openRouterApiKey?: string;
   private googleApiKey?: string;
   private cerebrasApiKey?: string;
-  private perplexityApiKey?: string;
   private openaiApiKey?: string;
   private ollamaBaseUrl?: string;
   private lastStreamingMetrics?: {
@@ -99,7 +97,6 @@ export class GigaClient {
     openRouterApiKey?: string,
     googleApiKey?: string,
     cerebrasApiKey?: string,
-    perplexityApiKey?: string,
     openaiApiKey?: string,
     ollamaBaseUrl?: string
   ) {
@@ -153,14 +150,6 @@ export class GigaClient {
       });
     }
     
-    this.perplexityApiKey = perplexityApiKey;
-    if (perplexityApiKey) {
-      this.perplexityClient = new OpenAI({
-        apiKey: perplexityApiKey,
-        baseURL: 'https://api.perplexity.ai',
-        timeout: 360000,
-      });
-    }
     
     this.openaiApiKey = openaiApiKey;
     if (openaiApiKey) {
@@ -225,11 +214,6 @@ export class GigaClient {
             throw new Error('Cerebras API key not provided. Please configure it in /providers.');
           }
           return this.cerebrasClient;
-        case 'perplexity':
-          if (!this.perplexityClient) {
-            throw new Error('Perplexity API key not provided. Please configure it in /providers.');
-          }
-          return this.perplexityClient;
         case 'openai':
           if (!this.openaiClient) {
             throw new Error('OpenAI API key not provided. Please configure it in /providers.');
@@ -296,13 +280,6 @@ export class GigaClient {
       'qwen-3-235b-a22b-instruct-2507'
     ];
     
-    // Perplexity models
-    const perplexityModels = [
-      'sonar',
-      'sonar-pro',
-      'sonar-deep-research',
-      'llama-3.1-sonar-small-128k-online'
-    ];
     
     // OpenAI models
     const openaiModels = [
@@ -355,7 +332,6 @@ export class GigaClient {
              !xaiModels.includes(modelName) &&
              !groqModels.includes(modelName) &&
              !cerebrasModels.includes(modelName) &&
-             !perplexityModels.includes(modelName) &&
              !openaiModels.includes(modelName);
     };
     
@@ -386,11 +362,6 @@ export class GigaClient {
         throw new Error('Cerebras API key not provided. Please configure it in /providers.');
       }
       return this.cerebrasClient;
-    } else if (perplexityModels.includes(model)) {
-      if (!this.perplexityClient) {
-        throw new Error('Perplexity API key not provided. Please configure it in /providers.');
-      }
-      return this.perplexityClient;
     } else if (openaiModels.includes(model)) {
       if (!this.openaiClient) {
         throw new Error('OpenAI API key not provided. Please configure it in /providers.');

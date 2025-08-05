@@ -84,18 +84,23 @@ export class ChunkingService {
         return [];
       }
 
-      // Read file content
+      // Check file size before reading
       const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(this.projectPath, filePath);
+      const stats = fs.statSync(absolutePath);
+      const fileSizeKB = stats.size / 1024;
+      
+      // Skip files that exceed the configured size limit
+      const maxFileSizeKB = this.config.maxFileSizeKB || 500;
+      if (fileSizeKB > maxFileSizeKB) {
+        console.warn(`⚠️  Skipping large file: ${filePath} (${Math.round(fileSizeKB)}KB > ${maxFileSizeKB}KB limit)`);
+        return [];
+      }
+
+      // Read file content
       const content = fs.readFileSync(absolutePath, 'utf-8');
 
       // Skip empty files
       if (content.trim().length === 0) {
-        return [];
-      }
-
-      // Skip very large files (> 1MB) to avoid overwhelming the system
-      if (content.length > 1024 * 1024) {
-        console.warn(`⚠️  Skipping large file: ${filePath} (${Math.round(content.length / 1024)}KB)`);
         return [];
       }
 
@@ -130,6 +135,7 @@ export class ChunkingService {
           absolute: false
         });
         
+        console.log(`📁 Pattern "${pattern}": found ${files.length} files`);
         allFiles.push(...files);
       } catch (error) {
         console.warn(`⚠️  Failed to process pattern ${pattern}:`, error);
@@ -138,6 +144,13 @@ export class ChunkingService {
 
     // Remove duplicates and sort
     const uniqueFiles = [...new Set(allFiles)].sort();
+    
+    // Limit the number of files to process
+    const maxFiles = this.config.maxFiles || 1000;
+    if (uniqueFiles.length > maxFiles) {
+      console.warn(`⚠️  Too many files found (${uniqueFiles.length}), limiting to ${maxFiles} for performance`);
+      return uniqueFiles.slice(0, maxFiles);
+    }
     
     return uniqueFiles;
   }

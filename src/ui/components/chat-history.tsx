@@ -98,8 +98,6 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
               return "Created Todo";
             case "update_todo_list":
               return "Updated Todo";
-            case "perplexity_search":
-              return "Search";
             case "call_mcp_tool":
               return "MCP";
             default:
@@ -124,12 +122,8 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
               // Handle todo tools and search tools specially - they don't have file paths
               if (
                 toolCall.function.name === "create_todo_list" ||
-                toolCall.function.name === "update_todo_list" ||
-                toolCall.function.name === "perplexity_search"
+                toolCall.function.name === "update_todo_list"
               ) {
-                if (toolCall.function.name === "perplexity_search") {
-                  return `"${args.query || 'unknown query'}"`;
-                }
                 return "";
               }
               
@@ -165,7 +159,6 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
         const shouldShowDiff =
           toolName === "str_replace_editor" || toolName === "create_file";
         const shouldShowFileContent = toolName === "view_file";
-        const shouldShowSearchResult = toolName === "perplexity_search";
 
         return (
           <Box key={index} flexDirection="column" marginTop={1}>
@@ -184,15 +177,11 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
                     {renderFileContent(entry.content)}
                   </Box>
                 </Box>
-              ) : shouldShowSearchResult ? (
-                <Box flexDirection="column">
-                  <Text color="gray">⎿ {entry.toolResult?.metadata?.userSummary || 'Search completed'}</Text>
-                </Box>
               ) : shouldShowDiff ? (
                 // For diff results, show only the summary line, not the raw content
                 <Text color="gray">⎿ {entry.content.split('\n')[0]}</Text>
               ) : (
-                <Text color="gray">⎿ {entry.content}</Text>
+                <Text color="gray">⎿ {truncateContent(entry.content)}</Text>
               )}
             </Box>
             {shouldShowDiff && (
@@ -206,6 +195,14 @@ export function ChatHistory({ entries }: ChatHistoryProps) {
       default:
         return null;
     }
+  };
+
+  const truncateContent = (content: string, maxLines = 5) => {
+    const lines = content.split('\n');
+    if (lines.length > maxLines) {
+      return lines.slice(0, maxLines).join('\n') + `\n... (truncated ${lines.length - maxLines} more lines)`;
+    }
+    return content;
   };
 
   return (

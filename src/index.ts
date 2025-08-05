@@ -15,6 +15,10 @@ import * as os from "os";
 dotenv.config();
 
 import { loadApiKeys } from "./utils/api-keys";
+import { initializeGlobalConfig } from "./utils/config-initializer";
+
+// Initialize global configuration on startup
+initializeGlobalConfig();
 
 // We'll set up the double Ctrl+C handler after Ink starts
 

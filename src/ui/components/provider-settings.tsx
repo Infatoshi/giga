@@ -26,7 +26,6 @@ interface UserSettings {
   googleApiKey?: string;
   xaiApiKey?: string;
   cerebrasApiKey?: string;
-  perplexityApiKey?: string;
   openaiApiKey?: string;
   ollamaBaseUrl?: string;
 }

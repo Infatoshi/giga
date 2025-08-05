@@ -63,9 +63,24 @@ export class RAGService {
 
     // Initialize Gemini AI if using Gemini embeddings
     if (this.config.embeddingProvider === 'gemini') {
-      const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      // Try to load API key from various sources
+      let apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      
+      // If not found in env, try loading from settings
+      if (!apiKey) {
+        try {
+          const { loadApiKeys } = require('../utils/api-keys');
+          const apiKeys = loadApiKeys();
+          apiKey = apiKeys.googleApiKey;
+        } catch (error) {
+          console.warn('Failed to load API keys:', error);
+        }
+      }
+      
       if (apiKey) {
         this.genAI = new GoogleGenerativeAI(apiKey);
+      } else {
+        console.warn('Google API key not found. RAG embeddings require a Google API key.');
       }
     }
   }

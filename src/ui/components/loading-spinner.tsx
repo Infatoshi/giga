@@ -5,6 +5,7 @@ interface LoadingSpinnerProps {
   isActive: boolean;
   processingTime: number;
   tokenCount: number;
+  statusMessage: string | null;
 }
 
 const loadingTexts = [
@@ -24,7 +25,7 @@ const loadingTexts = [
   "Downloading...",
 ];
 
-export function LoadingSpinner({ isActive, processingTime, tokenCount }: LoadingSpinnerProps) {
+export const LoadingSpinner = React.memo(function LoadingSpinner({ isActive, processingTime, tokenCount, statusMessage }: LoadingSpinnerProps) {
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [loadingTextIndex, setLoadingTextIndex] = useState(0);
 
@@ -58,11 +59,11 @@ export function LoadingSpinner({ isActive, processingTime, tokenCount }: Loading
   return (
     <Box marginTop={1}>
       <Text color="cyan">
-        {spinnerFrames[spinnerFrame]} {loadingTexts[loadingTextIndex]}{" "}
+        {spinnerFrames[spinnerFrame]} {statusMessage || loadingTexts[loadingTextIndex]}{" "}
       </Text>
       <Text color="gray">
         ({processingTime}s · ↑ {tokenCount} tokens · esc to interrupt)
       </Text>
     </Box>
   );
-}
+});

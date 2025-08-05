@@ -1,9 +1,10 @@
 import { GigaClient, GrokMessage, GrokToolCall } from "../giga/client";
 import { GROK_TOOLS, getAllTools } from "../giga/tools";
-import { TextEditorTool, BashTool, TodoTool, ConfirmationTool, McpTool, PerplexityTool, SemanticSearchTool } from "../tools";
+import { TextEditorTool, BashTool, TodoTool, ConfirmationTool, McpTool, SemanticSearchTool } from "../tools";
 import { ToolResult } from "../types";
 import { EventEmitter } from "events";
 import { createTokenCounter, TokenCounter } from "../utils/token-counter";
+import { ConversationTokenTracker } from "../utils/conversation-token-tracker";
 import { loadCustomInstructions } from "../utils/custom-instructions";
 import { loadApiKeys } from "../utils/api-keys";
 import { McpManager } from "../mcp/mcp-manager";
@@ -12,6 +13,8 @@ import { expertModelsManager, ExpertModelsConfig } from "../utils/expert-models-
 import { modeManager } from "../utils/mode-manager";
 import { AgentMode } from "../types";
 import { RAGContextService } from "../services/rag-context-service";
+import { GlobalSettingsManager } from "../utils/global-settings";
+import { ModelInfo } from "../utils/dynamic-model-fetcher";
 
 export interface ChatEntry {
   type: "user" | "assistant" | "tool_result";
@@ -30,7 +33,7 @@ export interface ChatEntry {
 }
 
 export interface StreamingChunk {
-  type: "content" | "tool_calls" | "tool_result" | "done" | "token_count";
+  type: "content" | "tool_calls" | "tool_result" | "done" | "token_count" | "status";
   content?: string;
   toolCalls?: GrokToolCall[];
   toolCall?: GrokToolCall;
@@ -45,13 +48,14 @@ export class GigaAgent extends EventEmitter {
   private todoTool: TodoTool;
   private confirmationTool: ConfirmationTool;
   private mcpTool: McpTool;
-  private perplexityTool: PerplexityTool;
   private semanticSearchTool: SemanticSearchTool;
   private mcpManager: McpManager;
   private ragContextService: RAGContextService;
   private chatHistory: ChatEntry[] = [];
   private messages: GrokMessage[] = [];
   private tokenCounter: TokenCounter;
+  private tokenTracker: ConversationTokenTracker | null = null;
+  private availableModels: ModelInfo[] = [];
   private abortController: AbortController | null = null;
   private selectedCustomPrompt: string | null = null;
   private lastBashOutput: string | null = null;
@@ -68,7 +72,6 @@ You have access to these tools:
 - create_file: Create new files with content (ONLY use this for files that don't exist yet)
 - str_replace_editor: Replace text in existing files (ALWAYS use this to edit or update existing files)
 - bash: Execute bash commands (use for searching, file discovery, navigation, and system operations)
-- perplexity_search: Search the web for current information, documentation, and research using Perplexity
 - semantic_search: Search through your codebase using semantic similarity to find relevant code snippets, functions, classes, and files
 - index_project: Index the current project for semantic search (creates embeddings of all code files)
 - get_index_status: Get the current status of the semantic search index
@@ -80,51 +83,20 @@ IMPORTANT TOOL USAGE RULES:
 - ALWAYS use str_replace_editor to modify existing files, even for small changes
 - Before editing a file, use view_file to see its current contents
 - Use create_file ONLY when creating entirely new files that don't exist
+SEARCHING AND EXPLORATION: Use bash commands like 'find', 'grep', 'rg', and 'ls' for file discovery and content search. Use 'view_file' to read specific files.
 
-SEARCHING AND EXPLORATION:
-- Use bash with commands like 'find', 'grep', 'rg' (ripgrep), 'ls', etc. for searching files and content
-- Examples: 'find . -name "*.js"', 'grep -r "function" src/', 'rg "import.*react"'
-- Use bash for directory navigation, file discovery, and content searching
-- view_file is best for reading specific files you already know exist
+EDITING AND CREATING FILES: To edit an existing file, first use 'view_file' to see its contents, then use 'str_replace_editor' to make changes. To create a new file, use 'create_file'.
 
-When a user asks you to edit, update, modify, or change an existing file:
-1. First use view_file to see the current contents
-2. Then use str_replace_editor to make the specific changes
-3. Never use create_file for existing files
+TASK PLANNING: For complex requests, create a todo list to plan your approach. Use 'create_todo_list' to break down tasks and 'update_todo_list' to track progress ('in_progress', 'completed'). Priorities can be set to 'high', 'medium', or 'low'.
 
-When a user asks you to create a new file that doesn't exist:
-1. Use create_file with the full content
+USER CONFIRMATION: File and bash operations require user confirmation. If an operation is rejected, the tool will return an error, and you should not proceed.
 
-TASK PLANNING WITH TODO LISTS:
-- For complex requests with multiple steps, ALWAYS create a todo list first to plan your approach
-- Use create_todo_list to break down tasks into manageable items with priorities
-- Mark tasks as 'in_progress' when you start working on them (only one at a time)
-- Mark tasks as 'completed' immediately when finished
-- Use update_todo_list to track your progress throughout the task
-- Todo lists provide visual feedback with colors: ✅ Green (completed), 🔄 Cyan (in progress), ⏳ Yellow (pending)
-- Always create todos with priorities: 'high' (🔴), 'medium' (🟡), 'low' (🟢)
-
-USER CONFIRMATION SYSTEM:
-File operations (create_file, str_replace_editor) and bash commands will automatically request user confirmation before execution. The confirmation system will show users the actual content or command before they decide. Users can choose to approve individual operations or approve all operations of that type for the session.
-
-If a user rejects an operation, the tool will return an error and you should not proceed with that specific operation.
-
-SEMANTIC SEARCH AND CODE CONTEXT (GIGA MODE ONLY):
-- RAG and semantic search functionality is only available in GIGA mode
-- When in GIGA mode and users ask about code, errors, or specific functionality, relevant code context may be automatically provided
-- Use the semantic_search tool to find specific code patterns, functions, or files when needed (GIGA mode only)
-- The index_project tool creates embeddings for semantic search - run this once per project to enable advanced code understanding (GIGA mode only)
-- Context-aware responses: In GIGA mode, your prompts may be automatically enhanced with relevant code snippets to provide better answers
-
-Be helpful, direct, and efficient. Always explain what you're doing and show the results.
-
-IMPORTANT RESPONSE GUIDELINES:
-- After using tools, do NOT respond with pleasantries like "Thanks for..." or "Great!"
-- Only provide necessary explanations or next steps if relevant to the task
-- Keep responses concise and focused on the actual work being done
-- If a tool execution completes the user's request, you can remain silent or give a brief confirmation
-- **RESPONSE DENSITY: Maximize information density - compress summaries while preserving all critical details. Avoid verbose explanations or redundant phrasing.**
-
+SEMANTIC SEARCH (RAG ENABLED): When RAG is enabled, code context may be automatically added to your prompts. Use 'semantic_search' to find code, and run 'index_project' once per project to enable this feature.
+  96 | RESPONSE FORMATTING:
+  97 | - Your output MUST emulate a terminal/CLI. Use only plain text, symbols, and indentation.
+  98 | - STRICTLY NO MARKDOWN. Never use '#', '##', or '###' for headers.
+  99 | - BE EXTREMELY SPATIALLY CONSCIOUS. Compress information. Use single lines with separators (e.g., commas or pipes) instead of multi-line lists.
+ 100 | - For lists, use simple bullets like '*' or '-'. Your entire response should be a single, dense block of text.
 Current working directory: ${process.cwd()}
 
 PROJECT CONTEXT:
@@ -134,23 +106,11 @@ Directory contents: ${directoryContents}
 
 RAG INDEX STATUS:
 ${ragIndexStatus}
-
-CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
-- When in GIGA mode and users say "find X", "search for X", "locate X" - they want to SEARCH THE CODEBASE, not run bash commands
-- In GIGA mode: NEVER use bash 'find', 'grep', or 'rg' commands for user search queries like "find cerebras"
-- In GIGA mode: Instead, use the semantic_search tool to search through indexed code
-- Examples (GIGA mode only):
-  * User: "find cerebras" → Use semantic_search tool to search for "cerebras" in code
-  * User: "search for RAG" → Use semantic_search tool to search for "RAG" in code  
-  * User: "locate authentication" → Use semantic_search tool to find authentication code
-- In PLAN/CHILL modes: Use bash commands for file system operations when users ask to search
-- ONLY use bash commands when the user explicitly asks for file system operations or gives technical commands
-- RAG search results will be automatically included in your context with similarity percentages when relevant (GIGA mode only)`;
+CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries like "find X" or "search for X" must use the 'semantic_search' tool, not bash commands. Use bash commands only for explicit file system operations.`;
   }
 
   constructor(apiKey: string, groqApiKey?: string) {
     super();
-    
     // Load all API keys from settings file and environment variables
     const savedKeys = loadApiKeys();
     const xaiKey = apiKey || savedKeys.xaiApiKey || process.env.XAI_API_KEY;
@@ -159,7 +119,6 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
     const openRouterKey = savedKeys.openRouterApiKey || process.env.OPENROUTER_API_KEY;
     const googleKey = savedKeys.googleApiKey || process.env.GOOGLE_API_KEY;
     const cerebrasKey = savedKeys.cerebrasApiKey || process.env.CEREBRAS_API_KEY;
-    const perplexityKey = savedKeys.perplexityApiKey || process.env.PERPLEXITY_API_KEY;
     const openaiKey = savedKeys.openaiApiKey || process.env.OPENAI_API_KEY;
     
     if (!xaiKey) {
@@ -174,7 +133,6 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
       openRouterKey,
       googleKey,
       cerebrasKey,
-      perplexityKey,
       openaiKey,
       savedKeys.ollamaBaseUrl
     );
@@ -183,7 +141,6 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
     this.todoTool = new TodoTool();
     this.confirmationTool = new ConfirmationTool();
     this.mcpTool = new McpTool();
-    this.perplexityTool = new PerplexityTool();
     this.semanticSearchTool = new SemanticSearchTool();
     this.mcpManager = McpManager.getInstance();
     this.ragContextService = new RAGContextService();
@@ -201,11 +158,42 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
     this.updateSystemPrompt().catch(console.error);
   }
 
+  private emitStatus(message: string): void {
+    this.emit('status', message);
+  }
+
   private async initializeMcpConnections(): Promise<void> {
     try {
+      this.emitStatus('Initializing MCP connections...');
+      // Initialize RAG index if RAG is enabled
+      await this.ensureRagIndexExists();
+      
       await this.mcpManager.initializeAllServers();
+      this.emitStatus('MCP connections initialized.');
     } catch (error) {
+      this.emitStatus('Failed to initialize some MCP servers.');
       console.warn('Failed to initialize some MCP servers:', error);
+    }
+  }
+
+  private async ensureRagIndexExists(): Promise<void> {
+    try {
+      // Initialize the RAG project configuration first
+      const { RAGConfigManager } = await import('../utils/rag-config');
+      RAGConfigManager.initializeProject();
+      
+      // Always attempt to initialize RAG index when Giga starts
+      const indexInfo = await this.ragContextService.getIndexInfo();
+      if (indexInfo.count === 0) {
+        console.log('🚀 RAG index not found, creating initial index...');
+        console.log('📁 This may take a moment to index your project files...');
+        await this.ragContextService.indexProject();
+        console.log('✅ RAG index created successfully - semantic search is now available!');
+      } else {
+        console.log('✅ RAG index found - semantic search is ready');
+      }
+    } catch (error) {
+      console.warn('Failed to initialize RAG index:', error);
     }
   }
 
@@ -222,6 +210,7 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
     let processedMessage = message;
     try {
       if (this.ragContextService.isEnabled() && modeManager.getCurrentMode() === AgentMode.GIGA) {
+        this.emitStatus('Enhancing prompt with RAG context...');
         const conversationHistory = this.chatHistory
           .filter(entry => entry.type === 'user')
           .slice(-3)
@@ -235,10 +224,13 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
         
         if (enrichmentResult.shouldEnrich) {
           processedMessage = enrichmentResult.enhancedPrompt;
-          console.log(`🔍 Enhanced prompt with ${enrichmentResult.searchResults.length} context items (confidence: ${enrichmentResult.confidence.toFixed(2)})`);
+          this.emitStatus(`Enhanced prompt with ${enrichmentResult.searchResults.length} context items.`);
+        } else {
+          this.emitStatus('No relevant RAG context found.');
         }
       }
     } catch (error) {
+      this.emitStatus('Failed to enhance prompt with RAG context.');
       console.warn('Failed to enhance prompt with RAG context:', error);
       // Continue with original message
     }
@@ -414,8 +406,14 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
     
     // Enhance message with RAG context if enabled
     let processedMessage = message;
+    
+    if (this.tokenTracker) {
+      this.tokenTracker.reset();
+      this.tokenTracker.addTokens(message);
+    }
     try {
       if (this.ragContextService.isEnabled() && modeManager.getCurrentMode() === AgentMode.GIGA) {
+        this.emitStatus('Enhancing prompt with RAG context...');
         const conversationHistory = this.chatHistory
           .filter(entry => entry.type === 'user')
           .slice(-3)
@@ -429,10 +427,13 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
         
         if (enrichmentResult.shouldEnrich) {
           processedMessage = enrichmentResult.enhancedPrompt;
-          console.log(`🔍 Enhanced prompt with ${enrichmentResult.searchResults.length} context items (confidence: ${enrichmentResult.confidence.toFixed(2)})`);
+          this.emitStatus(`Enhanced prompt with ${enrichmentResult.searchResults.length} context items.`);
+        } else {
+          this.emitStatus('No relevant RAG context found.');
         }
       }
     } catch (error) {
+      this.emitStatus('Failed to enhance prompt with RAG context.');
       console.warn('Failed to enhance prompt with RAG context:', error);
       // Continue with original message
     }
@@ -514,6 +515,10 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
           if (chunk.choices[0].delta?.content) {
             accumulatedContent += chunk.choices[0].delta.content;
 
+            const chunkContent = chunk.choices[0].delta.content;
+            if (this.tokenTracker) {
+              this.tokenTracker.addTokens(chunkContent);
+            }
             // Update token count in real-time
             const currentOutputTokens =
               this.tokenCounter.estimateStreamingTokens(accumulatedContent);
@@ -521,7 +526,7 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
 
             yield {
               type: "content",
-              content: chunk.choices[0].delta.content,
+              content: chunkContent,
             };
 
             // Emit token count update
@@ -691,8 +696,7 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
     // Tool orchestration and complex workflows
     const toolsTools = [
       'list_mcp_tools',
-      'call_mcp_tool',
-      'perplexity_search'
+      'call_mcp_tool'
     ];
 
     if (fastTools.includes(toolName)) {
@@ -743,9 +747,6 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
 
         case "update_todo_list":
           return await this.todoTool.updateTodoList(args.updates);
-
-        case "perplexity_search":
-          return await this.perplexityTool.search(args.query, args.max_results, args.summarize);
 
         case "list_mcp_tools":
           return await this.mcpTool.listMcpTools();
@@ -802,17 +803,35 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
     return this.gigaClient.getCurrentModel();
   }
 
-  setModel(model: string): void {
+  setModel(model: string, allModels?: ModelInfo[]): void {
     this.gigaClient.setModel(model);
     // Update token counter for new model
     this.tokenCounter.dispose();
     this.tokenCounter = createTokenCounter(model);
+    
+    if (allModels) {
+      this.availableModels = allModels;
+    }
+    
+    const modelInfo = this.availableModels.find(m => m.id === model);
+    if (modelInfo && modelInfo.context_length) {
+      this.tokenTracker = new ConversationTokenTracker({
+        model: model,
+        maxTokens: modelInfo.context_length,
+      });
+    } else {
+      this.tokenTracker = null;
+    }
   }
 
   abortCurrentOperation(): void {
     if (this.abortController) {
       this.abortController.abort();
     }
+  }
+
+  getTokenTrackerInfo() {
+    return this.tokenTracker?.a;
   }
 
   setSelectedCustomPrompt(promptName: string | null): void {
@@ -1023,21 +1042,14 @@ CRITICAL SEARCH QUERY ROUTING (GIGA MODE ONLY):
         // Parse the index count from the response
         const match = indexInfo.output.match(/(\d+)\s+chunks?.*indexed/);
         const chunkCount = match ? parseInt(match[1]) : 0;
-        
-        return `📊 RAG Index: ${chunkCount} code chunks indexed and ready for semantic search
-🔍 Semantic search is available - use for "find X" or "search for X" queries
-💾 Vector storage: .giga/embeddings/vectors.json`;
-      } else {
-        return `📊 RAG Index: Not yet indexed
-🔍 Run 'index_project' to enable semantic search capabilities  
-💾 Vector storage: .giga/embeddings/ (will be created after indexing)`;
-      }
-    } catch (error) {
-      return `📊 RAG Index: Status unavailable
-🔍 Semantic search functionality may not be initialized`;
-    }
-  }
-
+                                return `RAG Index: ${chunkCount} chunks indexed. Semantic search available.`;
+                              } else {
+                                return `RAG Index: Not indexed. Run 'index_project' to enable semantic search.`;
+                              }
+                            } catch (error) {
+                              return 'RAG Index: Status unavailable. Semantic search may not be initialized.';
+                            }
+                          }
   private async generateMcpSection(): Promise<string> {
     const enabledServers = this.mcpManager.getEnabledServers();
     

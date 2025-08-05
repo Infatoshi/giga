@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
+import { loadApiKeys } from "../../utils/api-keys";
 
 interface AddMcpServerProps {
   onClose: () => void;
@@ -17,6 +18,16 @@ export default function AddMcpServer({ onClose, onAddServer }: AddMcpServerProps
     env: '',
     description: ''
   });
+
+  useEffect(() => {
+    const keys = loadApiKeys();
+    if (keys.exaApiKey) {
+      setFormData(prev => ({
+        ...prev,
+        env: `EXA_API_KEY=${keys.exaApiKey}`
+      }));
+    }
+  }, []);
 
   const fields: { key: FormField; label: string; placeholder: string; required: boolean }[] = [
     { key: 'name', label: 'Server Name', placeholder: 'my-server', required: true },

@@ -1,7 +1,5 @@
 import { ToolResult } from '../types';
 import { RAGContextService } from '../services/rag-context-service';
-import { modeManager } from '../utils/mode-manager';
-import { AgentMode } from '../types';
 
 export class SemanticSearchTool {
   private ragService: RAGContextService;
@@ -12,13 +10,6 @@ export class SemanticSearchTool {
 
   async search(query: string, maxResults: number = 5): Promise<ToolResult> {
     try {
-      if (modeManager.getCurrentMode() !== AgentMode.GIGA) {
-        return {
-          success: false,
-          error: 'Semantic search is only available in GIGA mode. Switch to GIGA mode to use RAG functionality.'
-        };
-      }
-
       if (!this.ragService.isEnabled()) {
         return {
           success: false,
@@ -92,13 +83,6 @@ export class SemanticSearchTool {
 
   async indexProject(): Promise<ToolResult> {
     try {
-      if (modeManager.getCurrentMode() !== AgentMode.GIGA) {
-        return {
-          success: false,
-          error: 'Project indexing is only available in GIGA mode. Switch to GIGA mode to use RAG functionality.'
-        };
-      }
-
       if (!this.ragService.isEnabled()) {
         return {
           success: false,
@@ -139,13 +123,10 @@ export class SemanticSearchTool {
       const indexInfo = await this.ragService.getIndexInfo();
       
       let output = `📊 RAG Index Status:\n\n`;
-      output += `- Status: ${indexInfo.enabled ? '✅ Enabled' : '❌ Disabled'}\n`;
+      output += `- Local Config: ${indexInfo.enabled ? '✅ Enabled' : '❌ Disabled'}\n`;
       output += `- Indexed chunks: ${indexInfo.count}\n`;
-      output += `- Available in: ${modeManager.getCurrentMode() === AgentMode.GIGA ? '✅ Current mode (GIGA)' : '❌ GIGA mode only'}\n`;
       
-      if (modeManager.getCurrentMode() !== AgentMode.GIGA) {
-        output += `\n⚠️  RAG functionality is only available in GIGA mode. Switch to GIGA mode to use semantic search.`;
-      } else if (indexInfo.count === 0 && indexInfo.enabled) {
+      if (indexInfo.count === 0 && indexInfo.enabled) {
         output += `\n💡 Your project hasn't been indexed yet. Run the index command to enable semantic search.`;
       } else if (indexInfo.count > 0) {
         output += `\n✨ Semantic search is ready! Use the search command to find relevant code.`;
@@ -170,13 +151,6 @@ export class SemanticSearchTool {
 
   async clearIndex(): Promise<ToolResult> {
     try {
-      if (modeManager.getCurrentMode() !== AgentMode.GIGA) {
-        return {
-          success: false,
-          error: 'Index clearing is only available in GIGA mode. Switch to GIGA mode to use RAG functionality.'
-        };
-      }
-
       if (!this.ragService.isEnabled()) {
         return {
           success: false,

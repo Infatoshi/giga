@@ -8,7 +8,6 @@
 - **Custom Prompts** Custom prompts to accelerate your coding workflow
 - **All-in-one**: All features and command accessibl$e from inside the CLI, no weird setup terminal commands to bug you with.
 - **Auto-fill API Keys**: Search `~/.zshrc` and `~/.bashrc` (or whatever your setup is) for API keys of the different providers listed above (0 friction)
-- **Perplexity Search**: Automatically use structured input/output prompting with perplexity to get the most accurate information.
 - **Expert Specializing**: Turn on/off the ability to use different models for pure speed, code, thinking, tool calling (across all providers)
 - 
 ## Installation

@@ -65,7 +65,7 @@ export default function AddModel({
     const providerName = provider.name.toLowerCase() as ProviderName;
     
     try {
-      const models = await fetchModelsWithFallback(providerName, apiKey);
+      const { models } = await fetchModelsWithFallback(providerName, apiKey);
       setAllModels(models);
     } catch (error) {
       console.error(`Failed to load models for ${provider.name}:`, error);

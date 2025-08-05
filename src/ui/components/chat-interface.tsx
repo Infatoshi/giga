@@ -4,6 +4,7 @@ import { GigaAgent, ChatEntry } from "../../agent/giga-agent";
 import { useInputHandler } from "../../hooks/use-input-handler";
 import { LoadingSpinner } from "./loading-spinner";
 import { CommandSuggestions } from "./command-suggestions";
+import TokenProgressBar from "./token-progress-bar";
 import { ModelSelection } from "./model-selection";
 import { RouteSelection } from "./route-selection";
 import { TemperatureSelector } from "./temperature-selector";
@@ -24,6 +25,7 @@ import { FileFinder } from "./file-finder";
 import ConfirmationDialog from "./confirmation-dialog";
 import { ConfirmationService, ConfirmationOptions } from "../../utils/confirmation-service";
 import ApiKeyInput from "./api-key-input";
+import ExaApiKeyInput from "./exa-api-key-input";
 import { addModel, deleteModel } from "../../utils/added-models";
 import { addPrompt, deletePrompt } from "../../utils/prompts";
 import { addMcpServer, deleteMcpServer } from "../../utils/added-mcp-servers";
@@ -44,18 +46,20 @@ interface ChatInterfaceProps {
 }
 
 // Component showing session info and mode status
-function SessionStatus({ currentModel, currentMode }: { currentModel?: string, currentMode?: AgentMode }) {
+const SessionStatus = React.memo(function SessionStatus({ currentModel, currentMode }: { currentModel?: string, currentMode?: AgentMode }) {
   const sessionInfo = sessionManager.getSessionInfo();
   const displayModel = currentModel || sessionInfo?.currentModel || '';
   const noModelConfigured = !displayModel || displayModel.trim() === '';
   
-  // Get MCP server status
-  const mcpServers = loadAddedMcpServers();
-  const enabledMcpCount = mcpServers.filter(server => server.enabled).length;
+  // Memoize expensive operations
+  const mcpServers = React.useMemo(() => loadAddedMcpServers(), []);
+  const enabledMcpCount = React.useMemo(() => mcpServers.filter(server => server.enabled).length, [mcpServers]);
   
   // Get RAG status
-  const globalSettings = GlobalSettingsManager.getInstance();
-  const ragEnabled = globalSettings.isRagEnabled();
+  const ragEnabled = React.useMemo(() => {
+    const globalSettings = GlobalSettingsManager.getInstance();
+    return globalSettings.isRagEnabled();
+  }, []);
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -91,7 +95,7 @@ function SessionStatus({ currentModel, currentMode }: { currentModel?: string, c
       )}
     </Box>
   );
-}
+});
 
 // Main chat component that handles input when agent is available
 function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
@@ -99,12 +103,15 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingTime, setProcessingTime] = useState(0);
   const [tokenCount, setTokenCount] = useState(0);
+  const [tokenTrackerInfo, setTokenTrackerInfo] = useState(agent.getTokenTrackerInfo());
   const [isStreaming, setIsStreaming] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [confirmationOptions, setConfirmationOptions] = useState<ConfirmationOptions | null>(null);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<AgentMode>(modeManager.getCurrentMode());
   const scrollRef = useRef<any>();
   const processingStartTime = useRef<number>(0);
+  const hasInitialized = useRef<boolean>(false);
   
   const confirmationService = ConfirmationService.getInstance();
   const conversationManager = ConversationManager.getInstance();
@@ -162,6 +169,8 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
     refreshModels,
     refreshMcpServers,
     openRouterModels,
+    showExaApiKeyInput,
+    closeExaApiKeyInput,
   } = useInputHandler({
     agent,
     chatHistory,
@@ -170,6 +179,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
     setIsStreaming,
     setTokenCount,
     setProcessingTime,
+    setStatusMessage,
     processingStartTime,
     isProcessing,
     isStreaming,
@@ -179,20 +189,22 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
 
   useEffect(() => {
     // Only clear and show banner on initial mount, not on re-renders
-    console.clear();
-    cfonts.say("GIGA", {
-      font: "3d",
-      align: "left",
-      colors: ["magenta", "gray"],
-      space: true,
-      maxLength: "0",
-      gradient: ["magenta", "cyan"],
-      independentGradient: false,
-      transitionGradient: true,
-      env: "node",
-    });
-
-    setChatHistory([]);
+    if (!hasInitialized.current) {
+      console.clear();
+      cfonts.say("GIGA", {
+        font: "3d",
+        align: "left",
+        colors: ["magenta", "gray"],
+        space: true,
+        maxLength: "0",
+        gradient: ["magenta", "cyan"],
+        independentGradient: false,
+        transitionGradient: true,
+        env: "node",
+      });
+      hasInitialized.current = true;
+      setChatHistory([]);
+    }
   }, []); // Remove dependencies to run only once on mount
 
   useEffect(() => {
@@ -202,14 +214,22 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
 
     confirmationService.on('confirmation-requested', handleConfirmationRequest);
 
+    const handleStatusUpdate = (message: string) => {
+      setStatusMessage(message);
+    };
+
+    agent.on('status', handleStatusUpdate);
+
     return () => {
       confirmationService.off('confirmation-requested', handleConfirmationRequest);
+      agent.off('status', handleStatusUpdate);
     };
-  }, [confirmationService]);
+  }, [confirmationService, agent]);
 
   useEffect(() => {
     if (!isProcessing && !isStreaming) {
       setProcessingTime(0);
+      processingStartTime.current = 0;
       return;
     }
 
@@ -218,9 +238,12 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
     }
 
     const interval = setInterval(() => {
-      setProcessingTime(
-        Math.floor((Date.now() - processingStartTime.current) / 1000)
-      );
+      // Double-check we're still processing before updating
+      if (processingStartTime.current > 0) {
+        setProcessingTime(
+          Math.floor((Date.now() - processingStartTime.current) / 1000)
+        );
+      }
     }, 1000);
 
     return () => clearInterval(interval);
@@ -241,6 +264,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
     setTokenCount(0);
     setProcessingTime(0);
     processingStartTime.current = 0;
+    setTokenTrackerInfo(agent.getTokenTrackerInfo());
   };
 
   const handleAddModel = (providerName: string, modelName: string) => {
@@ -437,6 +461,23 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
     }
   }, [chatHistory, agent, conversationManager, currentConversationId]);
 
+  const handleExaApiKeySet = () => {
+    const confirmEntry: ChatEntry = {
+      type: "assistant",
+      content: `✓ EXA API key saved successfully.`,
+      timestamp: new Date(),
+    };
+    setChatHistory((prev) => [...prev, confirmEntry]);
+    closeExaApiKeyInput();
+  };
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTokenTrackerInfo(agent.getTokenTrackerInfo());
+    }, 100);
+    return () => clearInterval(interval);
+  }, [agent]);
+
   return (
     <Box flexDirection="column" padding={1}>
         <SessionStatus currentModel={agent.getCurrentModel()} currentMode={currentMode} />
@@ -451,6 +492,13 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
           <ChatHistoryMemo entries={chatHistory} />
         </Box>
 
+      {tokenTrackerInfo && (
+        <TokenProgressBar
+          current={tokenTrackerInfo.current}
+          max={tokenTrackerInfo.max}
+          model={tokenTrackerInfo.model}
+        />
+      )}
 
       {!confirmationOptions && (
         <>
@@ -458,6 +506,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
             isActive={isProcessing || isStreaming}
             processingTime={processingTime}
             tokenCount={tokenCount}
+            statusMessage={statusMessage}
           />
 
           {!showAddPrompt && !showDeletePrompt && !showPromptsList && (
@@ -608,6 +657,13 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
             <DeleteMcpServer
               onClose={closeDeleteMcpServer}
               onDeleteServer={handleDeleteMcpServer}
+            />
+          )}
+
+          {showExaApiKeyInput && (
+            <ExaApiKeyInput
+              onClose={closeExaApiKeyInput}
+              onApiKeySet={handleExaApiKeySet}
             />
           )}
         </>

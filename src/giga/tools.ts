@@ -175,31 +175,6 @@ export const GROK_TOOLS: GrokTool[] = [
   {
     type: 'function',
     function: {
-      name: 'perplexity_search',
-      description: 'Search the web using Perplexity for current information, documentation, and research',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description: 'The search query to look up'
-          },
-          max_results: {
-            type: 'number',
-            description: 'Maximum number of results to return (default: 10)'
-          },
-          summarize: {
-            type: 'boolean',
-            description: 'Whether to summarize results for concise output (default: true)'
-          }
-        },
-        required: ['query']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
       name: 'list_mcp_tools',
       description: 'List all available MCP tools from connected servers',
       parameters: {

@@ -6,12 +6,13 @@ export interface ModelInfo {
   name?: string;
   description?: string;
   provider?: string;
+  context_length?: number;
 }
-
 export interface ModelFetchResult {
   success: boolean;
   models: string[];
   error?: string;
+  allModels?: ModelInfo[];
 }
 
 // Fetch models from OpenRouter API
@@ -30,11 +31,19 @@ async function fetchOpenRouterModels(apiKey: string): Promise<ModelFetchResult> 
 
     const data = await response.json() as any;
     const models = data.data || data;
-    const modelIds = Array.isArray(models) 
-      ? models.map((model: any) => model.id).filter(Boolean)
+    const modelInfos = Array.isArray(models)
+      ? models.map((model: any) => ({
+          id: model.id,
+          name: model.name,
+          description: model.description,
+          provider: model.id.split('/')[0],
+          context_length: model.context_length
+        }))
       : [];
+    
+    const modelIds = modelInfos.map(m => m.id).filter(Boolean);
 
-    return { success: true, models: modelIds };
+    return { success: true, models: modelIds, allModels: modelInfos };
   } catch (error: any) {
     return { success: false, models: [], error: error.message };
   }
@@ -137,30 +146,6 @@ async function fetchCerebrasModels(apiKey: string): Promise<ModelFetchResult> {
   }
 }
 
-// Fetch models from Perplexity API
-async function fetchPerplexityModels(apiKey: string): Promise<ModelFetchResult> {
-  try {
-    const response = await fetch('https://api.perplexity.ai/models', {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) {
-      return { success: false, models: [], error: `HTTP ${response.status}` };
-    }
-
-    const data = await response.json() as any;
-    const models = Array.isArray(data) ? data : data.data || [];
-    const modelIds = models.map((model: any) => model.id || model.name).filter(Boolean);
-
-    return { success: true, models: modelIds };
-  } catch (error: any) {
-    return { success: false, models: [], error: error.message };
-  }
-}
-
 // Fetch models from OpenAI API
 async function fetchOpenaiModels(apiKey: string): Promise<ModelFetchResult> {
   try {
@@ -220,8 +205,6 @@ export async function fetchProviderModels(provider: ProviderName, apiKey: string
       case 'cerebras':
         // Cerebras uses static models since API doesn't return correct model names
         return { success: true, models: PROVIDER_MODELS.cerebras };
-      case 'perplexity':
-        return await fetchPerplexityModels(apiKey);
       case 'openai':
         return await fetchOpenaiModels(apiKey);
       case 'anthropic':
@@ -236,14 +219,14 @@ export async function fetchProviderModels(provider: ProviderName, apiKey: string
 }
 
 // Fetch models with fallback to static list
-export async function fetchModelsWithFallback(provider: ProviderName, apiKey: string): Promise<string[]> {
+export async function fetchModelsWithFallback(provider: ProviderName, apiKey: string): Promise<{ models: string[], allModels?: ModelInfo[] }> {
   const result = await fetchProviderModels(provider, apiKey);
   
   if (result.success && result.models.length > 0) {
-    return result.models.sort();
+    return { models: result.models.sort(), allModels: result.allModels };
   }
   
   // Fallback to static models
   const staticModels = PROVIDER_MODELS[provider] || [];
-  return staticModels.sort();
+  return { models: staticModels.sort() };
 }

@@ -112,33 +112,6 @@ export async function validateCerebrasKey(apiKey: string, model?: string): Promi
   }
 }
 
-// Validate Perplexity API key
-export async function validatePerplexityKey(apiKey: string): Promise<ApiKeyValidationResult> {
-  try {
-    const response = await fetch('https://api.perplexity.ai/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'sonar',
-        messages: [{ role: 'user', content: 'test' }],
-        max_tokens: 1,
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
-    
-    if (response.status === 401) {
-      return { isValid: false, error: 'Invalid API key' };
-    }
-    
-    return { isValid: true };
-  } catch (error: any) {
-    return { isValid: false, error: error?.message || "API validation failed" };
-  }
-}
-
 // Validate OpenAI API key
 export async function validateOpenaiKey(apiKey: string): Promise<ApiKeyValidationResult> {
   try {
@@ -200,8 +173,6 @@ export async function validateApiKey(provider: string, apiKey: string, model?: s
       return validateGroqKey(apiKey);
     case 'cerebras':
       return validateCerebrasKey(apiKey, model);
-    case 'perplexity':
-      return validatePerplexityKey(apiKey);
     case 'openai':
       return validateOpenaiKey(apiKey);
     default:

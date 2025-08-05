@@ -9,6 +9,9 @@ export interface RAGConfig {
   chunkingStrategy: 'logical' | 'fixed';
   includePatterns: string[];
   excludePatterns: string[];
+  maxFileSizeKB?: number;
+  maxDirectorySizeMB?: number;
+  maxFiles?: number;
 }
 
 const DEFAULT_RAG_CONFIG: RAGConfig = {
@@ -18,6 +21,9 @@ const DEFAULT_RAG_CONFIG: RAGConfig = {
   searchThreshold: 0.40,
   maxResults: 5,
   chunkingStrategy: 'logical',
+  maxFileSizeKB: 500,
+  maxDirectorySizeMB: 50,
+  maxFiles: 1000,
   includePatterns: [
     '**/*.ts',
     '**/*.js', 

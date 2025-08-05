@@ -10,7 +10,7 @@ interface UserSettings {
   googleApiKey?: string;
   xaiApiKey?: string;
   cerebrasApiKey?: string;
-  perplexityApiKey?: string;
+  exaApiKey?: string;
   openaiApiKey?: string;
   ollamaBaseUrl?: string;
 }
@@ -22,7 +22,7 @@ export interface ApiKeys {
   openRouterApiKey?: string;
   googleApiKey?: string;
   cerebrasApiKey?: string;
-  perplexityApiKey?: string;
+  exaApiKey?: string;
   openaiApiKey?: string;
   ollamaBaseUrl?: string;
 }
@@ -44,7 +44,7 @@ function checkShellFiles(): ApiKeys {
     openRouterApiKey: /export\s+OPENROUTER_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
     googleApiKey: /export\s+GOOGLE_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
     cerebrasApiKey: /export\s+CEREBRAS_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
-    perplexityApiKey: /export\s+PERPLEXITY_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
+    exaApiKey: /export\s+EXA_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
     openaiApiKey: /export\s+OPENAI_API_KEY\s*=\s*['"]?([^'";\s]+)['"]?/,
     ollamaBaseUrl: /export\s+OLLAMA_BASE_URL\s*=\s*['"]?([^'";\s]+)['"]?/,
   } as const;
@@ -77,11 +77,6 @@ function saveShellKeysToSettings(shellKeys: ApiKeys): void {
     const settingsDir = path.join(homeDir, '.giga');
     const settingsFile = path.join(settingsDir, 'user-settings.json');
     
-    // Create .giga directory if it doesn't exist
-    if (!fs.existsSync(settingsDir)) {
-      fs.mkdirSync(settingsDir, { recursive: true });
-    }
-    
     // Load existing settings or create empty object
     let settings: UserSettings = {};
     if (fs.existsSync(settingsFile)) {
@@ -97,7 +92,7 @@ function saveShellKeysToSettings(shellKeys: ApiKeys): void {
       openRouterApiKey: 'openRouterApiKey',
       googleApiKey: 'googleApiKey',
       cerebrasApiKey: 'cerebrasApiKey',
-      perplexityApiKey: 'perplexityApiKey',
+      exaApiKey: 'exaApiKey',
       openaiApiKey: 'openaiApiKey',
       ollamaBaseUrl: 'ollamaBaseUrl',
     };
@@ -148,6 +143,26 @@ export function refreshGlobalSharedInfo(): void {
   }
 }
 
+export function saveExaApiKey(apiKey: string): void {
+  try {
+    const homeDir = os.homedir();
+    const settingsDir = path.join(homeDir, '.giga');
+    const settingsFile = path.join(settingsDir, 'user-settings.json');
+
+    let settings: UserSettings = {};
+    if (fs.existsSync(settingsFile)) {
+      settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    }
+
+    settings.exaApiKey = apiKey;
+
+    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+    refreshGlobalSharedInfo();
+  } catch (error) {
+    // Silently ignore
+  }
+}
+
 export function loadApiKeys(): ApiKeys {
   try {
     const homeDir = os.homedir();
@@ -161,7 +176,7 @@ export function loadApiKeys(): ApiKeys {
       openRouterApiKey: process.env.OPENROUTER_API_KEY,
       googleApiKey: process.env.GOOGLE_API_KEY,
       cerebrasApiKey: process.env.CEREBRAS_API_KEY,
-      perplexityApiKey: process.env.PERPLEXITY_API_KEY,
+      exaApiKey: process.env.EXA_API_KEY,
       openaiApiKey: process.env.OPENAI_API_KEY,
       ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
     };
@@ -183,7 +198,7 @@ export function loadApiKeys(): ApiKeys {
         openRouterApiKey: settings.openRouterApiKey,
         googleApiKey: settings.googleApiKey,
         cerebrasApiKey: settings.cerebrasApiKey,
-        perplexityApiKey: settings.perplexityApiKey,
+        exaApiKey: settings.exaApiKey,
         openaiApiKey: settings.openaiApiKey,
         ollamaBaseUrl: settings.ollamaBaseUrl,
       };
@@ -197,7 +212,7 @@ export function loadApiKeys(): ApiKeys {
       openRouterApiKey: envKeys.openRouterApiKey || shellKeys.openRouterApiKey || settingsKeys.openRouterApiKey,
       googleApiKey: envKeys.googleApiKey || shellKeys.googleApiKey || settingsKeys.googleApiKey,
       cerebrasApiKey: envKeys.cerebrasApiKey || shellKeys.cerebrasApiKey || settingsKeys.cerebrasApiKey,
-      perplexityApiKey: envKeys.perplexityApiKey || shellKeys.perplexityApiKey || settingsKeys.perplexityApiKey,
+      exaApiKey: envKeys.exaApiKey || shellKeys.exaApiKey || settingsKeys.exaApiKey,
       openaiApiKey: envKeys.openaiApiKey || shellKeys.openaiApiKey || settingsKeys.openaiApiKey,
       ollamaBaseUrl: envKeys.ollamaBaseUrl || shellKeys.ollamaBaseUrl || settingsKeys.ollamaBaseUrl || 'http://localhost:11434',
     };

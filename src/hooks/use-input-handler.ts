@@ -26,6 +26,7 @@ interface UseInputHandlerProps {
   setIsStreaming: (streaming: boolean) => void;
   setTokenCount: (count: number) => void;
   setProcessingTime: (time: number) => void;
+  setStatusMessage: (message: string | null) => void;
   processingStartTime: React.MutableRefObject<number>;
   isProcessing: boolean;
   isStreaming: boolean;
@@ -57,6 +58,7 @@ export function useInputHandler({
   setIsStreaming,
   setTokenCount,
   setProcessingTime,
+  setStatusMessage,
   processingStartTime,
   isProcessing,
   isStreaming,
@@ -80,11 +82,13 @@ export function useInputHandler({
   const [showDeleteMcpServer, setShowDeleteMcpServer] = useState(false);
   const [selectedMcpServerIndex, setSelectedMcpServerIndex] = useState(0);
   const [dynamicModels, setDynamicModels] = useState<ModelOption[]>([]);
+  const [allModels, setAllModels] = useState<any[]>([]);
   const [mcpServers, setMcpServers] = useState<AddedMcpServer[]>([]);
   const [showConversationHistory, setShowConversationHistory] = useState(false);
   const [showTemperatureSelector, setShowTemperatureSelector] = useState(false);
   const [currentTemperature, setCurrentTemperature] = useState(0.7);
   const [showExpertModels, setShowExpertModels] = useState(false);
+  const [showExaApiKeyInput, setShowExaApiKeyInput] = useState(false);
   
   // Route selection state
   const [showRouteSelection, setShowRouteSelection] = useState(false);
@@ -213,10 +217,13 @@ export function useInputHandler({
   const closeTemperatureSelector = () => {
     setShowTemperatureSelector(false);
   };
+const closeExpertModels = () => {
+  setShowExpertModels(false);
+};
 
-  const closeExpertModels = () => {
-    setShowExpertModels(false);
-  };
+const closeExaApiKeyInput = () => {
+  setShowExaApiKeyInput(false);
+};
 
   const closeFileFinder = () => {
     setShowFileFinder(false);
@@ -267,16 +274,18 @@ export function useInputHandler({
       setFileQuery("");
     }
   };
-
-  const refreshModels = () => {
-    const instanceModels = getInstanceAvailableModels();
-    const modelOptions: ModelOption[] = instanceModels.map(model => ({
-      model: model.model,
-      description: `${model.description}${model.isFavorite ? ' ⭐' : ''}${model.isRecentlyUsed ? ' 🕒' : ''}`
-    }));
-    
-    setDynamicModels(modelOptions);
-  };
+const refreshModels = (allModelsData?: any[]) => {
+  if (allModelsData) {
+    setAllModels(allModelsData);
+  }
+  const instanceModels = getInstanceAvailableModels();
+  const modelOptions: ModelOption[] = instanceModels.map(model => ({
+    model: model.model,
+    description: `${model.description}${model.isFavorite ? ' ⭐' : ''}${model.isRecentlyUsed ? ' 🕒' : ''}`
+  }));
+  
+  setDynamicModels(modelOptions);
+};
 
   const refreshMcpServers = () => {
     const addedServers = loadAddedMcpServers();
@@ -347,6 +356,7 @@ export function useInputHandler({
     { command: "/sampling", description: "Adjust sampling temperature" },
     { command: "/experts", description: "Configure expert model routing" },
     { command: "/providers", description: "Configure API Keys" },
+    { command: "/exa", description: "Set your EXA API key for search" },
     { command: "/exit", description: "Exit the application" },
   ];
 
@@ -359,7 +369,6 @@ export function useInputHandler({
     { name: "xAI", keyName: "xaiApiKey", description: "Grok models" },
     { name: "Groq", keyName: "groqApiKey", description: "Fast inference" },
     { name: "Cerebras", keyName: "cerebrasApiKey", description: "Cerebras models" },
-    { name: "Perplexity", keyName: "perplexityApiKey", description: "Perplexity models" },
     { name: "OpenAI", keyName: "openaiApiKey", description: "GPT models" },
     { name: "Ollama", keyName: "ollamaBaseUrl", description: "Local Ollama models" },
   ];
@@ -408,9 +417,10 @@ export function useInputHandler({
         type: "assistant",
         content: `Getting started:
 1. First time? Configure API keys: /providers
-2. Add models from your providers: /add-model
-3. Select your preferred model: /models
-4. Ask questions, edit files, or run commands!
+2. To enable web search, set your EXA API key: /exa
+3. Add models from your providers: /add-model
+4. Select your preferred model: /models
+5. Ask questions, edit files, or run commands!
 
 Need help? Type /help for more information.`,
         timestamp: new Date(),
@@ -445,12 +455,13 @@ Built-in Commands:
   /sampling     - Adjust sampling temperature
   /experts      - Configure expert model routing
   /providers    - Configure API keys
+  /exa          - Set your EXA API key for search
   /exit         - Exit application
   exit, quit    - Exit application
 
 Direct Commands (executed immediately):
   ls [path]   - List directory contents
-  pwd         - Show current directory  
+  pwd         - Show current directory
   cd <path>   - Change directory
   cat <file>  - View file contents
   mkdir <dir> - Create directory
@@ -493,11 +504,19 @@ Examples:
     }
 
     if (trimmedInput === "/add-model") {
-      setShowAddModel(true);
-      addToHistory(trimmedInput);
-      setInput("");
-      return true;
-    }
+        setShowAddModel(true);
+        addToHistory(trimmedInput);
+        setInput("");
+        // Fetch models when the add model dialog is opened
+        const { fetchModelsWithFallback } = await import('../utils/dynamic-model-fetcher');
+        const { loadApiKeys } = await import('../utils/api-keys');
+        const keys = loadApiKeys();
+        const result = await fetchModelsWithFallback('openrouter', keys.openRouterApiKey || '');
+        if (result.allModels) {
+          refreshModels(result.allModels);
+        }
+        return true;
+      }
 
     if (trimmedInput === "/delete-model") {
       setShowDeleteModel(true);
@@ -568,6 +587,13 @@ Examples:
 
     if (trimmedInput === "/experts") {
       setShowExpertModels(true);
+      addToHistory(trimmedInput);
+      setInput("");
+      return true;
+    }
+
+    if (trimmedInput === "/exa") {
+      setShowExaApiKeyInput(true);
       addToHistory(trimmedInput);
       setInput("");
       return true;
@@ -665,7 +691,7 @@ Examples:
 
       if (modelNames.includes(modelArg)) {
         onModelSelected(modelArg);
-        agent.setModel(modelArg);
+        agent.setModel(modelArg, allModels);
         const confirmEntry: ChatEntry = {
           type: "assistant",
           content: `✓ Switched to model: ${modelArg}`,
@@ -958,7 +984,7 @@ Available models: ${modelNames.join(", ")}`,
 
   useInput(async (inputChar: string, key: any) => {
     // Don't handle input if confirmation dialog or prompt dialogs are active
-    if (isConfirmationActive || showAddPrompt || showDeletePrompt || showPromptsList || showRouteSelection || showConversationHistory || showTemperatureSelector || showExpertModels) {
+    if (isConfirmationActive || showAddPrompt || showDeletePrompt || showPromptsList || showRouteSelection || showConversationHistory || showTemperatureSelector || showExpertModels || showExaApiKeyInput) {
       // Special handling for route selection
       if (showRouteSelection) {
         await handleRouteSelectionInput(inputChar, key);
@@ -1098,6 +1124,10 @@ Available models: ${modelNames.join(", ")}`,
         setShowExpertModels(false);
         return;
       }
+      if (showExaApiKeyInput) {
+        closeExaApiKeyInput();
+        return;
+      }
       if (showMcpServers) {
         setShowMcpServers(false);
         setSelectedMcpServerIndex(0);
@@ -1160,7 +1190,7 @@ Available models: ${modelNames.join(", ")}`,
       if (key.tab || key.return) {
         const selectedModel = dynamicModels[selectedModelIndex];
         onModelSelected(selectedModel.model);
-        agent.setModel(selectedModel.model);
+        agent.setModel(selectedModel.model, allModels);
         const confirmEntry: ChatEntry = {
           type: "assistant",
           content: `✓ Switched to model: ${selectedModel.model}`,
@@ -1362,6 +1392,7 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
     showTemperatureSelector,
     currentTemperature,
     showExpertModels,
+    showExaApiKeyInput,
     showRouteSelection,
     routeViewMode,
     selectedRouteModelIndex,
@@ -1389,6 +1420,7 @@ Added: ${new Date(selectedServer.dateAdded).toLocaleDateString()}`,
     closeConversationHistory,
     closeTemperatureSelector,
     closeExpertModels,
+    closeExaApiKeyInput,
     closeRouteSelection,
     closeFileFinder,
     refreshModels,
