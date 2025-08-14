@@ -341,7 +341,6 @@ const refreshModels = (allModelsData?: any[]) => {
     { command: "/help", description: "Show help information" },
     { command: "/intro", description: "Show getting started information" },
     { command: "/clear", description: "Start new conversation" },
-    { command: "/rag", description: "Configure RAG settings" },
     { command: "/history", description: "Browse conversation history" },
     { command: "/models", description: "Switch Grok Model" },
     { command: "/route", description: "Configure model provider routing" },
@@ -440,7 +439,6 @@ Built-in Commands:
   /clear        - Start new conversation
   /help         - Show this help
   /intro        - Show getting started information
-  /rag          - Configure RAG settings
   /history      - Browse conversation history (Ctrl+H)
   /models       - Switch models
   /route        - Configure model provider routing
@@ -599,91 +597,6 @@ Examples:
       return true;
     }
 
-    if (trimmedInput === "/rag") {
-      const { GlobalSettingsManager } = require('../utils/global-settings');
-      const { RAGSettingsManager } = require('../utils/rag-settings');
-      
-      const globalSettings = GlobalSettingsManager.getInstance();
-      const ragSettings = RAGSettingsManager.getInstance();
-      const currentSettings = globalSettings.getSettings();
-      const indexStatus = await ragSettings.getIndexStatus();
-      
-      const ragEntry: ChatEntry = {
-        type: "assistant",
-        content: `**RAG Configuration**\n\n` +
-          `📚 **Status**: ${currentSettings.ragEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
-          `🔍 **Index Status**: ${indexStatus.isIndexed ? `${indexStatus.chunkCount} documents indexed` : 'Not indexed'}\n\n` +
-          `**Commands:**\n` +
-          `• Type \`/rag on\` to enable RAG\n` +
-          `• Type \`/rag off\` to disable RAG\n` +
-          `• Type \`/rag status\` to view detailed status\n\n` +
-          `${currentSettings.ragEnabled ? '📚 Loaded ' + (indexStatus.chunkCount || 0) + ' documents from index\n✅ RAG service initialized with file-based storage\n✅ RAG context service initialized successfully' : ''}`,
-        timestamp: new Date(),
-      };
-      setChatHistory((prev) => [...prev, ragEntry]);
-      addToHistory(trimmedInput);
-      setInput("");
-      return true;
-    }
-
-    if (trimmedInput === "/rag on") {
-      const { GlobalSettingsManager } = require('../utils/global-settings');
-      const globalSettings = GlobalSettingsManager.getInstance();
-      globalSettings.setRagEnabled(true);
-      
-      const ragEntry: ChatEntry = {
-        type: "assistant",
-        content: `✅ RAG enabled globally. RAG features will be available in new sessions.`,
-        timestamp: new Date(),
-      };
-      setChatHistory((prev) => [...prev, ragEntry]);
-      addToHistory(trimmedInput);
-      setInput("");
-      return true;
-    }
-
-    if (trimmedInput === "/rag off") {
-      const { GlobalSettingsManager } = require('../utils/global-settings');
-      const globalSettings = GlobalSettingsManager.getInstance();
-      globalSettings.setRagEnabled(false);
-      
-      const ragEntry: ChatEntry = {
-        type: "assistant",
-        content: `❌ RAG disabled globally. RAG features will not be available in new sessions.`,
-        timestamp: new Date(),
-      };
-      setChatHistory((prev) => [...prev, ragEntry]);
-      addToHistory(trimmedInput);
-      setInput("");
-      return true;
-    }
-
-    if (trimmedInput === "/rag status") {
-      const { GlobalSettingsManager } = require('../utils/global-settings');
-      const { RAGSettingsManager } = require('../utils/rag-settings');
-      
-      const globalSettings = GlobalSettingsManager.getInstance();
-      const ragSettings = RAGSettingsManager.getInstance();
-      const currentSettings = globalSettings.getSettings();
-      const indexStatus = await ragSettings.getIndexStatus();
-      
-      const ragEntry: ChatEntry = {
-        type: "assistant",
-        content: `**RAG Detailed Status**\n\n` +
-          `📚 **Global Status**: ${currentSettings.ragEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
-          `🔍 **Index Status**: ${indexStatus.isIndexed ? 'Indexed' : 'Not indexed'}\n` +
-          `📄 **Document Count**: ${indexStatus.chunkCount || 0}\n\n` +
-          `**Initialization Logs:**\n` +
-          `📚 Loaded ${indexStatus.chunkCount || 0} documents from index\n` +
-          `✅ RAG service initialized with file-based storage\n` +
-          `✅ RAG context service initialized successfully`,
-        timestamp: new Date(),
-      };
-      setChatHistory((prev) => [...prev, ragEntry]);
-      addToHistory(trimmedInput);
-      setInput("");
-      return true;
-    }
 
     if (trimmedInput.startsWith("/models ")) {
       const modelArg = trimmedInput.split(" ")[1];
@@ -1020,38 +933,10 @@ Available models: ${modelNames.join(", ")}`,
       return;
     }
     
-    // Fallback double Ctrl+C detection in case process-level handler doesn't work
+    // Ctrl+C is handled by the process-level handler for immediate exit
     if (key.ctrl && inputChar === "c") {
-      const now = Date.now();
-      const timeSinceLastCtrlC = now - lastCtrlCRef.current;
-      
-      if (timeSinceLastCtrlC < 1000 && lastCtrlCRef.current > 0) {
-        // Second Ctrl+C within 1 second - exit immediately
-        if (ctrlCTimeoutRef.current) {
-          clearTimeout(ctrlCTimeoutRef.current);
-          ctrlCTimeoutRef.current = null;
-        }
-        console.log('\n👋 Goodbye! (from useInput)');
-        exit();
-        return;
-      } else {
-        // First Ctrl+C or too late - show message and start timer
-        lastCtrlCRef.current = now;
-        console.log('\nPress Ctrl+C again within 1 second to exit (useInput)');
-        
-        // Clear any existing timeout
-        if (ctrlCTimeoutRef.current) {
-          clearTimeout(ctrlCTimeoutRef.current);
-        }
-        
-        // Reset the timer after 1 second
-        ctrlCTimeoutRef.current = setTimeout(() => {
-          lastCtrlCRef.current = 0;
-          ctrlCTimeoutRef.current = null;
-        }, 1000);
-        
-        return;
-      }
+      // Let the process-level handler deal with it
+      return;
     }
 
     // Handle Shift+Tab for mode cycling
@@ -1062,12 +947,8 @@ Available models: ${modelNames.join(", ")}`,
         onModeChange(newMode);
       }
       
-      const modeEntry: ChatEntry = {
-        type: "assistant",
-        content: `🔄 Mode switched to: **${modeManager.getModeDisplayName()}** - ${modeManager.getModeDescription()}`,
-        timestamp: new Date(),
-      };
-      setChatHistory((prev) => [...prev, modeEntry]);
+      // Mode change will be reflected in the SessionStatus component automatically
+      // No need to add chat history entries for mode switches
       return;
     }
 

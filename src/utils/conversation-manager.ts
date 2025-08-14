@@ -201,6 +201,22 @@ export class ConversationManager {
     }
   }
 
+  async getMostRecentConversation(): Promise<SavedConversation | null> {
+    try {
+      const summaries = await this.listConversations();
+      if (summaries.length === 0) {
+        return null;
+      }
+      
+      // Get the most recent conversation (first in the sorted list)
+      const mostRecent = summaries[0];
+      return await this.loadConversation(mostRecent.id);
+    } catch (error) {
+      console.error('Failed to get most recent conversation:', error);
+      return null;
+    }
+  }
+
   async deleteConversation(id: string): Promise<boolean> {
     try {
       const filePath = this.getConversationPath(id);

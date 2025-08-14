@@ -37,7 +37,6 @@ export class McpManager {
     
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
-        console.error(`Failed to connect to MCP server ${servers[index].name}:`, result.reason);
       }
     });
   }
@@ -85,7 +84,6 @@ export class McpManager {
         await this.httpManager.stopHttpServer(serverName);
       }
       
-      console.log(`Disconnected from MCP server: ${serverName}`);
     }
   }
 
@@ -197,7 +195,6 @@ export class McpManager {
     
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
-        console.error(`Failed to connect to new MCP server ${newServers[index].name}:`, result.reason);
       }
     });
 
@@ -220,7 +217,6 @@ export class McpManager {
           try {
             await this.connectToServer(server);
           } catch (error) {
-            console.error(`Failed to connect to enabled server ${serverName}:`, error);
           }
         }
       } else {

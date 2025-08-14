@@ -1,15 +1,34 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { NeonText } from "./neon-text";
+import { AgentMode } from "../../types";
 
 interface ChatInputProps {
   input: string;
   isProcessing: boolean;
   isStreaming: boolean;
   currentModel?: string;
+  currentMode?: AgentMode;
 }
 
-export function ChatInput({ input, isProcessing, isStreaming, currentModel }: ChatInputProps) {
+export function ChatInput({ input, isProcessing, isStreaming, currentModel, currentMode }: ChatInputProps) {
+  const getModeColor = () => {
+    switch (currentMode) {
+      case AgentMode.GIGA: return 'yellow';
+      case AgentMode.CHILL: return 'green';
+      case AgentMode.PLAN: return 'blue';
+      default: return 'gray';
+    }
+  };
+
+  const getModeDisplayName = () => {
+    switch (currentMode) {
+      case AgentMode.GIGA: return 'GIGA MODE';
+      case AgentMode.CHILL: return 'CHILL MODE';
+      case AgentMode.PLAN: return 'PLAN MODE';
+      default: return '';
+    }
+  };
+
   return (
     <Box flexDirection="column">
       <Box borderStyle="round" borderColor="gray" paddingX={1} marginTop={1}>
@@ -19,9 +38,9 @@ export function ChatInput({ input, isProcessing, isStreaming, currentModel }: Ch
           {!isProcessing && !isStreaming && <Text color="white">█</Text>}
         </Text>
       </Box>
-      {currentModel && (
+      {currentMode && (
         <Box justifyContent="flex-end" marginTop={1}>
-          <NeonText text={currentModel} />
+          <Text color={getModeColor()} bold>{getModeDisplayName()}</Text>
         </Box>
       )}
     </Box>

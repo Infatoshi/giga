@@ -204,53 +204,6 @@ export const GROK_TOOLS: GrokTool[] = [
         required: ['tool_name']
       }
     }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'semantic_search',
-      description: 'Search through the codebase using semantic similarity to find relevant code snippets, functions, classes, and files',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description: 'The search query - can be a description of what you\'re looking for, error messages, function names, or technical concepts'
-          },
-          max_results: {
-            type: 'number',
-            description: 'Maximum number of results to return (default: 5, max: 20)',
-            minimum: 1,
-            maximum: 20
-          }
-        },
-        required: ['query']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'index_project',
-      description: 'Index the current project for semantic search. This creates embeddings of all code files to enable semantic search functionality',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: []
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_index_status',
-      description: 'Get the current status of the semantic search index, including whether it\'s enabled and how many chunks are indexed',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: []
-      }
-    }
   }
 ];
 

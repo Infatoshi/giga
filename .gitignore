@@ -91,3 +91,6 @@ temp/
 
 # Coding agents
 .claude/
+
+# Local embeddings cache
+.giga/embeddings/

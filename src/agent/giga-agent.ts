@@ -1,6 +1,6 @@
 import { GigaClient, GrokMessage, GrokToolCall } from "../giga/client";
 import { GROK_TOOLS, getAllTools } from "../giga/tools";
-import { TextEditorTool, BashTool, TodoTool, ConfirmationTool, McpTool, SemanticSearchTool } from "../tools";
+import { TextEditorTool, BashTool, TodoTool, ConfirmationTool, McpTool } from "../tools";
 import { ToolResult } from "../types";
 import { EventEmitter } from "events";
 import { createTokenCounter, TokenCounter } from "../utils/token-counter";
@@ -12,8 +12,6 @@ import { sessionManager } from "../utils/session-manager";
 import { expertModelsManager, ExpertModelsConfig } from "../utils/expert-models-manager";
 import { modeManager } from "../utils/mode-manager";
 import { AgentMode } from "../types";
-import { RAGContextService } from "../services/rag-context-service";
-import { GlobalSettingsManager } from "../utils/global-settings";
 import { ModelInfo } from "../utils/dynamic-model-fetcher";
 
 export interface ChatEntry {
@@ -48,9 +46,7 @@ export class GigaAgent extends EventEmitter {
   private todoTool: TodoTool;
   private confirmationTool: ConfirmationTool;
   private mcpTool: McpTool;
-  private semanticSearchTool: SemanticSearchTool;
   private mcpManager: McpManager;
-  private ragContextService: RAGContextService;
   private chatHistory: ChatEntry[] = [];
   private messages: GrokMessage[] = [];
   private tokenCounter: TokenCounter;
@@ -62,8 +58,7 @@ export class GigaAgent extends EventEmitter {
   private async getBaseSystemPrompt(): Promise<string> {
     const directoryStructure = await this.getDirectoryStructure();
     const directoryContents = await this.getDirectoryContents();
-    const ragIndexStatus = await this.getRagIndexStatus();
-    const mcpSection = await this.generateMcpSection();
+        const mcpSection = await this.generateMcpSection();
     
     return `You are GIGA, an AI assistant that helps with file editing, coding tasks, and system operations.
 
@@ -72,9 +67,6 @@ You have access to these tools:
 - create_file: Create new files with content (ONLY use this for files that don't exist yet)
 - str_replace_editor: Replace text in existing files (ALWAYS use this to edit or update existing files)
 - bash: Execute bash commands (use for searching, file discovery, navigation, and system operations)
-- semantic_search: Search through your codebase using semantic similarity to find relevant code snippets, functions, classes, and files
-- index_project: Index the current project for semantic search (creates embeddings of all code files)
-- get_index_status: Get the current status of the semantic search index
 - create_todo_list: Create a visual todo list for planning and tracking tasks
 - update_todo_list: Update existing todos in your todo list${mcpSection}
 
@@ -91,8 +83,7 @@ TASK PLANNING: For complex requests, create a todo list to plan your approach. U
 
 USER CONFIRMATION: File and bash operations require user confirmation. If an operation is rejected, the tool will return an error, and you should not proceed.
 
-SEMANTIC SEARCH (RAG ENABLED): When RAG is enabled, code context may be automatically added to your prompts. Use 'semantic_search' to find code, and run 'index_project' once per project to enable this feature.
-  96 | RESPONSE FORMATTING:
+RESPONSE FORMATTING:
   97 | - Your output MUST emulate a terminal/CLI. Use only plain text, symbols, and indentation.
   98 | - STRICTLY NO MARKDOWN. Never use '#', '##', or '###' for headers.
   99 | - BE EXTREMELY SPATIALLY CONSCIOUS. Compress information. Use single lines with separators (e.g., commas or pipes) instead of multi-line lists.
@@ -103,10 +94,7 @@ PROJECT CONTEXT:
 Current directory: ${process.cwd()}
 Directory structure: ${directoryStructure}
 Directory contents: ${directoryContents}
-
-RAG INDEX STATUS:
-${ragIndexStatus}
-CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries like "find X" or "search for X" must use the 'semantic_search' tool, not bash commands. Use bash commands only for explicit file system operations.`;
+`;
   }
 
   constructor(apiKey: string, groqApiKey?: string) {
@@ -141,9 +129,7 @@ CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries l
     this.todoTool = new TodoTool();
     this.confirmationTool = new ConfirmationTool();
     this.mcpTool = new McpTool();
-    this.semanticSearchTool = new SemanticSearchTool();
     this.mcpManager = McpManager.getInstance();
-    this.ragContextService = new RAGContextService();
     this.tokenCounter = createTokenCounter("grok-4-latest");
 
     // Initialize MCP connections
@@ -165,8 +151,6 @@ CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries l
   private async initializeMcpConnections(): Promise<void> {
     try {
       this.emitStatus('Initializing MCP connections...');
-      // Initialize RAG index if RAG is enabled
-      await this.ensureRagIndexExists();
       
       await this.mcpManager.initializeAllServers();
       this.emitStatus('MCP connections initialized.');
@@ -176,26 +160,6 @@ CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries l
     }
   }
 
-  private async ensureRagIndexExists(): Promise<void> {
-    try {
-      // Initialize the RAG project configuration first
-      const { RAGConfigManager } = await import('../utils/rag-config');
-      RAGConfigManager.initializeProject();
-      
-      // Always attempt to initialize RAG index when Giga starts
-      const indexInfo = await this.ragContextService.getIndexInfo();
-      if (indexInfo.count === 0) {
-        console.log('🚀 RAG index not found, creating initial index...');
-        console.log('📁 This may take a moment to index your project files...');
-        await this.ragContextService.indexProject();
-        console.log('✅ RAG index created successfully - semantic search is now available!');
-      } else {
-        console.log('✅ RAG index found - semantic search is ready');
-      }
-    } catch (error) {
-      console.warn('Failed to initialize RAG index:', error);
-    }
-  }
 
   async refreshMcpConnections(): Promise<void> {
     try {
@@ -206,43 +170,14 @@ CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries l
   }
 
   async processUserMessage(message: string): Promise<ChatEntry[]> {
-    // Enhance message with RAG context if enabled
-    let processedMessage = message;
-    try {
-      if (this.ragContextService.isEnabled() && modeManager.getCurrentMode() === AgentMode.GIGA) {
-        this.emitStatus('Enhancing prompt with RAG context...');
-        const conversationHistory = this.chatHistory
-          .filter(entry => entry.type === 'user')
-          .slice(-3)
-          .map(entry => entry.content);
-        
-        const enrichmentResult = await this.ragContextService.enrichUserPrompt(
-          message, 
-          this.lastBashOutput || undefined,
-          conversationHistory
-        );
-        
-        if (enrichmentResult.shouldEnrich) {
-          processedMessage = enrichmentResult.enhancedPrompt;
-          this.emitStatus(`Enhanced prompt with ${enrichmentResult.searchResults.length} context items.`);
-        } else {
-          this.emitStatus('No relevant RAG context found.');
-        }
-      }
-    } catch (error) {
-      this.emitStatus('Failed to enhance prompt with RAG context.');
-      console.warn('Failed to enhance prompt with RAG context:', error);
-      // Continue with original message
-    }
-
-    // Add user message to conversation (use original message for history)
+    // Add user message to conversation
     const userEntry: ChatEntry = {
       type: "user",
       content: message,
       timestamp: new Date(),
     };
     this.chatHistory.push(userEntry);
-    this.messages.push({ role: "user", content: processedMessage });
+    this.messages.push({ role: "user", content: message });
 
     const newEntries: ChatEntry[] = [userEntry];
     const maxToolRounds = 20; // Prevent infinite loops
@@ -404,48 +339,19 @@ CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries l
     // Create new abort controller for this request
     this.abortController = new AbortController();
     
-    // Enhance message with RAG context if enabled
-    let processedMessage = message;
-    
     if (this.tokenTracker) {
       this.tokenTracker.reset();
       this.tokenTracker.addTokens(message);
     }
-    try {
-      if (this.ragContextService.isEnabled() && modeManager.getCurrentMode() === AgentMode.GIGA) {
-        this.emitStatus('Enhancing prompt with RAG context...');
-        const conversationHistory = this.chatHistory
-          .filter(entry => entry.type === 'user')
-          .slice(-3)
-          .map(entry => entry.content);
-        
-        const enrichmentResult = await this.ragContextService.enrichUserPrompt(
-          message, 
-          this.lastBashOutput || undefined,
-          conversationHistory
-        );
-        
-        if (enrichmentResult.shouldEnrich) {
-          processedMessage = enrichmentResult.enhancedPrompt;
-          this.emitStatus(`Enhanced prompt with ${enrichmentResult.searchResults.length} context items.`);
-        } else {
-          this.emitStatus('No relevant RAG context found.');
-        }
-      }
-    } catch (error) {
-      this.emitStatus('Failed to enhance prompt with RAG context.');
-      console.warn('Failed to enhance prompt with RAG context:', error);
-      // Continue with original message
-    }
     
-    // Add user message to conversation (use original message for history)
+    // Add user message to conversation
     const userEntry: ChatEntry = {
       type: "user",
       content: message,
       timestamp: new Date(),
     };
     this.chatHistory.push(userEntry);
-    this.messages.push({ role: "user", content: processedMessage });
+    this.messages.push({ role: "user", content: message });
 
     // Calculate input tokens
     const inputTokens = this.tokenCounter.countMessageTokens(
@@ -736,7 +642,7 @@ CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries l
 
         case "bash":
           const bashResult = await this.bash.execute(args.command);
-          // Store bash output for RAG context enhancement
+          // Store bash output for context
           if (bashResult.success && bashResult.output) {
             this.lastBashOutput = bashResult.output;
           }
@@ -754,14 +660,6 @@ CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries l
         case "call_mcp_tool":
           return await this.mcpTool.callMcpTool(args.tool_name, args.arguments || {});
 
-        case "semantic_search":
-          return await this.semanticSearchTool.search(args.query, args.max_results);
-
-        case "index_project":
-          return await this.semanticSearchTool.indexProject();
-
-        case "get_index_status":
-          return await this.semanticSearchTool.getIndexStatus();
 
         default:
           // Check if it's a dynamic MCP tool
@@ -1029,27 +927,6 @@ CRITICAL SEARCH QUERY ROUTING (RAG ENABLED): When RAG is enabled, user queries l
     }
   }
 
-  private async getRagIndexStatus(): Promise<string> {
-    try {
-      // Initialize RAG context service to get index info
-      const ragService = new RAGContextService();
-      
-      // Check if there's an existing index
-      const semanticSearchTool = new SemanticSearchTool();
-      const indexInfo = await semanticSearchTool.getIndexStatus();
-      
-      if (indexInfo.success && indexInfo.output && indexInfo.output.includes('indexed')) {
-        // Parse the index count from the response
-        const match = indexInfo.output.match(/(\d+)\s+chunks?.*indexed/);
-        const chunkCount = match ? parseInt(match[1]) : 0;
-                                return `RAG Index: ${chunkCount} chunks indexed. Semantic search available.`;
-                              } else {
-                                return `RAG Index: Not indexed. Run 'index_project' to enable semantic search.`;
-                              }
-                            } catch (error) {
-                              return 'RAG Index: Status unavailable. Semantic search may not be initialized.';
-                            }
-                          }
   private async generateMcpSection(): Promise<string> {
     const enabledServers = this.mcpManager.getEnabledServers();
     

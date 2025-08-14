@@ -578,7 +578,6 @@ export class GigaClient {
         const decodeTime = firstTokenTime ? endTime - firstTokenTime : durationMs - prefillTime;
         const decodeTokensPerSecond = decodeTime > 0 ? outputTokens / (decodeTime / 1000) : 0;
         
-        console.log(`\x1b[34mprefill - ${prefillTime}ms\x1b[0m | \x1b[33mdecode - ${Math.round(decodeTokensPerSecond)} toks/sec (${outputTokens} out / ${decodeTime}ms)\x1b[0m`);
         this.lastStreamingMetrics = {
           prefillTimeMs: prefillTime,
           decodeTimeMs: decodeTime,

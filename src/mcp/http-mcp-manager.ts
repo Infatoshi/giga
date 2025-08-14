@@ -34,7 +34,6 @@ export class HttpMcpManager {
     
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
-        console.error(`Failed to start HTTP MCP server ${servers[index].name}:`, result.reason);
       }
     });
   }
@@ -82,11 +81,9 @@ export class HttpMcpManager {
       };
 
       this.runningServers.set(server.name, runningServer);
-      console.log(`HTTP MCP server ${server.name} started on port ${server.port}`);
       
       return client;
     } catch (error) {
-      console.error(`Failed to start HTTP MCP server ${server.name}:`, error);
       throw error;
     }
   }
@@ -120,7 +117,6 @@ export class HttpMcpManager {
       });
 
       childProcess.on('exit', (code, signal) => {
-        console.log(`HTTP MCP server ${server.name} exited with code ${code}, signal ${signal}`);
         this.runningServers.delete(server.name);
         
         // Auto-restart if enabled and not intentionally stopped
@@ -130,11 +126,9 @@ export class HttpMcpManager {
       });
 
       childProcess.stdout?.on('data', (data) => {
-        console.log(`[${server.name}] ${data.toString().trim()}`);
       });
 
       childProcess.stderr?.on('data', (data) => {
-        console.error(`[${server.name} ERROR] ${data.toString().trim()}`);
       });
 
       // Give the process a moment to start
@@ -186,13 +180,11 @@ export class HttpMcpManager {
     // Exponential backoff for restarts
     const delay = Math.min(1000 * Math.pow(2, existing.restartCount), 30000);
     
-    console.log(`Restarting HTTP MCP server ${server.name} in ${delay}ms (attempt ${existing.restartCount})`);
     
     setTimeout(async () => {
       try {
         await this.startHttpServer(server);
       } catch (error) {
-        console.error(`Failed to restart HTTP MCP server ${server.name}:`, error);
       }
     }, delay);
   }
@@ -215,9 +207,7 @@ export class HttpMcpManager {
       }, 5000);
       
       this.runningServers.delete(serverName);
-      console.log(`Stopped HTTP MCP server: ${serverName}`);
     } catch (error) {
-      console.error(`Error stopping HTTP MCP server ${serverName}:`, error);
     }
   }
 

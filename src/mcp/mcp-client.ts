@@ -83,20 +83,18 @@ export class McpClient {
                 const message = JSON.parse(line);
                 this.handleMessage(message);
               } catch (error) {
-                console.error('Failed to parse MCP message:', error, 'Line:', line);
               }
             }
           }
         });
 
         this.process.stderr?.on('data', (data) => {
-          console.error(`MCP server stderr: ${data}`);
+          // Suppress MCP server stderr logs
         });
 
         this.process.on('close', (code) => {
           this.isConnected = false;
           if (code !== 0) {
-            console.error(`MCP server exited with code ${code}`);
           }
         });
 
@@ -140,7 +138,6 @@ export class McpClient {
         this.serverInfo.tools = toolsResponse.tools;
       }
     } catch (error) {
-      console.warn('Failed to get tools list:', error);
       this.serverInfo.tools = [];
     }
 
@@ -154,7 +151,6 @@ export class McpClient {
       // Many MCP servers don't implement resources/list - silently ignore "Method not found" errors
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (!errorMessage.includes('Method not found')) {
-        console.warn('Failed to get resources list:', error);
       }
       this.serverInfo.resources = [];
     }
@@ -173,7 +169,6 @@ export class McpClient {
       }
     } else {
       // This is a notification or request from the server
-      console.log('Received MCP message:', message);
     }
   }
 

@@ -8,22 +8,22 @@ export class ModeManager {
       mode: AgentMode.PLAN,
       allowExpertModels: false,
       requireConfirmation: false,
-      displayName: '📋 PLAN MODE',
-      description: 'Planning and thinking only - no expert models'
+      displayName: 'PLAN MODE',
+      description: ''
     },
     [AgentMode.CHILL]: {
       mode: AgentMode.CHILL,
       allowExpertModels: true,
       requireConfirmation: true,
-      displayName: '😌 CHILL MODE',
-      description: 'All models available - asks permission for tool calls'
+      displayName: 'CHILL MODE',
+      description: ''
     },
     [AgentMode.GIGA]: {
       mode: AgentMode.GIGA,
       allowExpertModels: true,
       requireConfirmation: false,
-      displayName: '⚡ GIGA MODE',
-      description: 'Full power - no permission requests'
+      displayName: 'GIGA MODE',
+      description: ''
     }
   };
 

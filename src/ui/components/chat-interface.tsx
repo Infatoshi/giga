@@ -35,7 +35,6 @@ import { sessionManager } from "../../utils/session-manager";
 import { modeManager } from "../../utils/mode-manager";
 import { AgentMode } from "../../types";
 import { loadAddedMcpServers } from "../../utils/added-mcp-servers";
-import { GlobalSettingsManager } from "../../utils/global-settings";
 import cfonts from "cfonts";
 
 // Memoized ChatHistory component to prevent unnecessary re-renders
@@ -43,63 +42,38 @@ const ChatHistoryMemo = React.memo(ChatHistory);
 
 interface ChatInterfaceProps {
   agent?: GigaAgent;
+  initialMessages?: ChatEntry[];
+  initialConversationId?: string;
 }
 
-// Component showing session info and mode status
-const SessionStatus = React.memo(function SessionStatus({ currentModel, currentMode }: { currentModel?: string, currentMode?: AgentMode }) {
+// Component showing session info and setup status
+const SessionStatus = React.memo(function SessionStatus({ currentModel }: { currentModel?: string }) {
   const sessionInfo = sessionManager.getSessionInfo();
   const displayModel = currentModel || sessionInfo?.currentModel || '';
   const noModelConfigured = !displayModel || displayModel.trim() === '';
   
-  // Memoize expensive operations
-  const mcpServers = React.useMemo(() => loadAddedMcpServers(), []);
-  const enabledMcpCount = React.useMemo(() => mcpServers.filter(server => server.enabled).length, [mcpServers]);
-  
-  // Get RAG status
-  const ragEnabled = React.useMemo(() => {
-    const globalSettings = GlobalSettingsManager.getInstance();
-    return globalSettings.isRagEnabled();
-  }, []);
+  // Only show if model is not configured
+  if (!noModelConfigured) return null;
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box flexDirection="row" marginBottom={1}>
-        <Text bold color="green">Session: </Text>
-        <Text color="gray">{(sessionInfo?.instanceId?.slice(0, 8)) || 'unknown'}</Text>
-        <Text color="gray"> | Model: </Text>
-        {noModelConfigured ? (
-          <Text bold color="red">Not configured</Text>
-        ) : (
-          <Text bold color="cyan">{displayModel || 'Unknown'}</Text>
-        )}
-        <Text color="gray"> | MCPs: </Text>
-        <Text color={enabledMcpCount > 0 ? "green" : "red"}>{enabledMcpCount}</Text>
-        <Text color="gray"> | RAG: </Text>
-        <Text color={ragEnabled ? "green" : "red"}>{ragEnabled ? "ON" : "OFF"}</Text>
+    <Box flexDirection="column" marginBottom={1}>      
+      <Box flexDirection="column" marginBottom={1}>
+        <Text bold color="yellow">⚠️  First-time setup required:</Text>
+        <Text color="gray">1. Configure API keys: /providers</Text>
+        <Text color="gray">2. Add models: /add-model</Text>
+        <Text color="gray">3. Select a model: /models</Text>
       </Box>
-      
-      <Box marginBottom={1}>
-        <Text bold color={currentMode === AgentMode.GIGA ? 'yellow' : currentMode === AgentMode.CHILL ? 'green' : 'blue'}>
-          {modeManager.getModeDisplayName()}
-        </Text>
-        <Text dimColor> - {modeManager.getModeDescription()}</Text>
-      </Box>
-      
-      {noModelConfigured && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold color="yellow">⚠️  First-time setup required:</Text>
-          <Text color="gray">1. Configure API keys: /providers</Text>
-          <Text color="gray">2. Add models: /add-model</Text>
-          <Text color="gray">3. Select a model: /models</Text>
-        </Box>
-      )}
     </Box>
   );
 });
 
 // Main chat component that handles input when agent is available
-function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
-  const [chatHistory, setChatHistory] = useState<ChatEntry[]>([]);
+function ChatInterfaceWithAgent({ agent, initialMessages = [], initialConversationId }: { 
+  agent: GigaAgent; 
+  initialMessages?: ChatEntry[]; 
+  initialConversationId?: string;
+}) {
+  const [chatHistory, setChatHistory] = useState<ChatEntry[]>(initialMessages);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingTime, setProcessingTime] = useState(0);
   const [tokenCount, setTokenCount] = useState(0);
@@ -107,7 +81,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [confirmationOptions, setConfirmationOptions] = useState<ConfirmationOptions | null>(null);
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(initialConversationId || null);
   const [currentMode, setCurrentMode] = useState<AgentMode>(modeManager.getCurrentMode());
   const scrollRef = useRef<any>();
   const processingStartTime = useRef<number>(0);
@@ -188,9 +162,8 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
   });
 
   useEffect(() => {
-    // Only clear and show banner on initial mount, not on re-renders
+    // Only show banner on initial mount, not on re-renders
     if (!hasInitialized.current) {
-      console.clear();
       cfonts.say("GIGA", {
         font: "3d",
         align: "left",
@@ -480,7 +453,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
 
   return (
     <Box flexDirection="column" padding={1}>
-        <SessionStatus currentModel={agent.getCurrentModel()} currentMode={currentMode} />
+        <SessionStatus currentModel={agent.getCurrentModel()} />
         
         <Box flexDirection="column" marginBottom={1}>
           <Text dimColor>
@@ -515,6 +488,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
               isProcessing={isProcessing}
               isStreaming={isStreaming}
               currentModel={agent.getCurrentModel()}
+              currentMode={currentMode}
             />
           )}
 
@@ -685,7 +659,7 @@ function ChatInterfaceWithAgent({ agent }: { agent: GigaAgent }) {
 }
 
 // Main component that handles API key input or chat interface
-export default function ChatInterface({ agent }: ChatInterfaceProps) {
+export default function ChatInterface({ agent, initialMessages, initialConversationId }: ChatInterfaceProps) {
   const [currentAgent, setCurrentAgent] = useState<GigaAgent | null>(agent || null);
 
   const handleApiKeySet = (newAgent: GigaAgent) => {
@@ -696,5 +670,9 @@ export default function ChatInterface({ agent }: ChatInterfaceProps) {
     return <ApiKeyInput onApiKeySet={handleApiKeySet} />;
   }
 
-  return <ChatInterfaceWithAgent agent={currentAgent} />;
+  return <ChatInterfaceWithAgent 
+    agent={currentAgent} 
+    initialMessages={initialMessages} 
+    initialConversationId={initialConversationId}
+  />;
 }

@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 export interface GlobalSettings {
-  ragEnabled: boolean;
+  // Empty for now - can add other settings later
 }
 
 const SETTINGS_DIR = path.join(os.homedir(), '.giga');
@@ -31,9 +31,7 @@ export class GlobalSettingsManager {
     this.ensureSettingsDir();
     
     if (!fs.existsSync(SETTINGS_FILE)) {
-      const defaultSettings: GlobalSettings = {
-        ragEnabled: true // Default to enabled
-      };
+      const defaultSettings: GlobalSettings = {};
       this.saveSettings(defaultSettings);
       return defaultSettings;
     }
@@ -42,16 +40,10 @@ export class GlobalSettingsManager {
       const settingsContent = fs.readFileSync(SETTINGS_FILE, 'utf-8');
       const settings = JSON.parse(settingsContent) as GlobalSettings;
       
-      // Ensure all required fields exist
-      return {
-        ragEnabled: settings.ragEnabled ?? true,
-        ...settings
-      };
+      return { ...settings };
     } catch (error) {
       console.warn('Failed to load global settings, using defaults:', error);
-      const defaultSettings: GlobalSettings = {
-        ragEnabled: true
-      };
+      const defaultSettings: GlobalSettings = {};
       return defaultSettings;
     }
   }
@@ -74,11 +66,4 @@ export class GlobalSettingsManager {
     return newSettings;
   }
 
-  isRagEnabled(): boolean {
-    return this.getSettings().ragEnabled;
-  }
-
-  setRagEnabled(enabled: boolean): void {
-    this.updateSettings({ ragEnabled: enabled });
-  }
 }

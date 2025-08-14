@@ -7,6 +7,7 @@ import * as dotenv from "dotenv";
 import { GigaAgent } from "./agent/giga-agent";
 import ChatInterface from "./ui/components/chat-interface";
 import { ConfirmationService } from "./utils/confirmation-service";
+import { ConversationManager } from "./utils/conversation-manager";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -37,6 +38,7 @@ program
   .version("1.0.0")
   .option("-p, --prompt <prompt>", "run a single prompt in headless mode")
   .option("-d, --directory <dir>", "set working directory", process.cwd())
+  .option("-c, --continue", "continue the most recent conversation")
   .action(async (options) => {
     if (options.directory) {
       try {
@@ -107,9 +109,34 @@ program
         const hasKeys = hasAnyApiKey();
         const agent = hasKeys ? new GigaAgent('', '') : undefined;
 
-        console.log("🤖 Starting GIGA Conversational Assistant...\n");
+        let initialMessages = undefined;
+        let initialConversationId = undefined;
 
-        const app = render(React.createElement(ChatInterface, { agent }));
+        // Handle --continue flag
+        if (options.continue && agent) {
+          try {
+            const conversationManager = ConversationManager.getInstance();
+            const recentConversation = await conversationManager.getMostRecentConversation();
+            
+            if (recentConversation) {
+              initialMessages = recentConversation.messages;
+              initialConversationId = recentConversation.id;
+              console.log(`📚 Continuing conversation from ${new Date(recentConversation.updatedAt).toLocaleString()}`);
+              console.log(`   Model: ${recentConversation.model} | Messages: ${recentConversation.messageCount}\n`);
+            } else {
+              console.log('📚 No previous conversations found, starting fresh\n');
+            }
+          } catch (error) {
+            console.error('❌ Failed to load recent conversation:', error);
+            console.log('📚 Starting fresh conversation\n');
+          }
+        }
+
+        const app = render(React.createElement(ChatInterface, { 
+          agent, 
+          initialMessages,
+          initialConversationId 
+        }));
 
         // Set up double Ctrl+C handler after Ink is running
         let lastCtrlCTime = 0;
@@ -119,34 +146,9 @@ program
         process.removeAllListeners('SIGINT');
 
         process.on('SIGINT', () => {
-          const now = Date.now();
-          const timeSinceLastCtrlC = now - lastCtrlCTime;
-          
-          if (timeSinceLastCtrlC < 1000 && lastCtrlCTime > 0) {
-            // Second Ctrl+C within 1 second - exit immediately
-            if (ctrlCTimeout) {
-              clearTimeout(ctrlCTimeout);
-              ctrlCTimeout = null;
-            }
-            console.log('\n👋 Goodbye!');
-            app.unmount();
-            process.exit(0);
-          } else {
-            // First Ctrl+C or too late - show message and start timer
-            lastCtrlCTime = now;
-            console.log('\nPress Ctrl+C again within 1 second to exit');
-            
-            // Clear any existing timeout
-            if (ctrlCTimeout) {
-              clearTimeout(ctrlCTimeout);
-            }
-            
-            // Reset the timer after 1 second
-            ctrlCTimeout = setTimeout(() => {
-              lastCtrlCTime = 0;
-              ctrlCTimeout = null;
-            }, 1000);
-          }
+          // Exit immediately without any message
+          app.unmount();
+          process.exit(0);
         });
       } catch (error: any) {
         console.error("❌ Error initializing GIGA:", error.message);

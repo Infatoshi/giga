@@ -66,6 +66,9 @@ appveyor.yml
 *.tgz
 *.log
 
+# Local embeddings cache
+.giga/embeddings/
+
 # Include only what's needed for the package
 # The dist/ folder should be included (not ignored)
 # package.json and README.md should be included

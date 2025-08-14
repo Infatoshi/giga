@@ -38,7 +38,6 @@ export class HttpMcpClient {
       // Test connection by calling initialize
       await this.initialize();
       this.isConnected = true;
-      console.log(`Connected to HTTP MCP server: ${this.server.name} at ${this.server.httpUrl}`);
     } catch (error) {
       throw new Error(`Failed to connect to HTTP MCP server ${this.server.name}: ${error}`);
     }
@@ -67,7 +66,6 @@ export class HttpMcpClient {
       await this.sendRequest('initialized', {});
     } catch (error) {
       // Some servers may not implement initialized, ignore errors
-      console.warn(`HTTP MCP server ${this.server.name} does not support initialized notification`);
     }
 
     // Get available tools
@@ -77,7 +75,6 @@ export class HttpMcpClient {
         this.serverInfo.tools = toolsResponse.tools;
       }
     } catch (error) {
-      console.warn(`Failed to get tools list from ${this.server.name}:`, error);
       this.serverInfo.tools = [];
     }
 
@@ -88,7 +85,6 @@ export class HttpMcpClient {
         this.serverInfo.resources = resourcesResponse.resources;
       }
     } catch (error) {
-      console.warn(`Failed to get resources list from ${this.server.name}:`, error);
       this.serverInfo.resources = [];
     }
   }
@@ -173,7 +169,6 @@ export class HttpMcpClient {
                 result = data.result;
               }
             } catch (error) {
-              console.warn('Failed to parse SSE data:', line, error);
             }
           }
         }
