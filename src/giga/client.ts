@@ -5,6 +5,12 @@ import { sessionManager } from '../utils/session-manager';
 import { getOpenRouterProvider } from '../utils/added-models';
 import { createTokenCounter } from '../utils/token-counter';
 
+// Cache for token counters to avoid recreation
+const tokenCounterCache = new Map<string, any>();
+
+// Export for testing
+export const clearTokenCounterCache = () => tokenCounterCache.clear();
+
 export type GrokMessage = ChatCompletionMessageParam;
 
 export interface GrokTool {
@@ -90,7 +96,7 @@ export class GigaClient {
   };
 
   constructor(
-    apiKey: string, 
+    apiKey?: string, 
     model?: string, 
     groqApiKey?: string, 
     anthropicApiKey?: string, 
@@ -100,11 +106,13 @@ export class GigaClient {
     openaiApiKey?: string,
     ollamaBaseUrl?: string
   ) {
-    this.xaiClient = new OpenAI({
-      apiKey,
-      baseURL: 'https://api.x.ai/v1',
-      timeout: 360000,
-    });
+    if (apiKey) {
+      this.xaiClient = new OpenAI({
+        apiKey,
+        baseURL: 'https://api.x.ai/v1',
+        timeout: 360000,
+      });
+    }
     
     this.groqApiKey = groqApiKey;
     if (groqApiKey) {
@@ -203,6 +211,9 @@ export class GigaClient {
           }
           return this.googleClient;
         case 'xai':
+          if (!this.xaiClient) {
+            throw new Error('XAI API key not provided. Please configure it in /providers.');
+          }
           return this.xaiClient;
         case 'groq':
           if (!this.groqClient) {
@@ -351,7 +362,10 @@ export class GigaClient {
       }
       return this.googleClient;
     } else if (xaiModels.includes(model)) {
-      return this.xaiClient; // Default xAI client
+      if (!this.xaiClient) {
+        throw new Error('XAI API key not provided. Please configure it in /providers.');
+      }
+      return this.xaiClient;
     } else if (groqModels.includes(model)) {
       if (!this.groqClient) {
         throw new Error('Groq API key not provided. Please configure it in /providers.');
@@ -372,6 +386,9 @@ export class GigaClient {
     }
     
     // Default to XAI for unknown models or grok models
+    if (!this.xaiClient) {
+      throw new Error('No suitable API client found for model. Please configure the appropriate API key in /providers.');
+    }
     return this.xaiClient;
   }
 
@@ -385,6 +402,149 @@ export class GigaClient {
 
   getLastStreamingMetrics(): { prefillTimeMs: number; decodeTimeMs: number; outputTokens: number; tokensPerSecond: number; } | undefined {
     return this.lastStreamingMetrics;
+  }
+
+  // Optimized methods for expert routing - don't change session model
+  private getCachedTokenCounter(model: string): any {
+    if (!tokenCounterCache.has(model)) {
+      tokenCounterCache.set(model, createTokenCounter(model));
+    }
+    return tokenCounterCache.get(model);
+  }
+
+  async chatWithExpert(
+    messages: GrokMessage[],
+    tools: GrokTool[] = [],
+    expertModel: string
+  ): Promise<GrokResponse> {
+    const startTime = Date.now();
+    
+    try {
+      if (!expertModel) {
+        throw new Error('Expert model not specified');
+      }
+      
+      const tokenCounter = this.getCachedTokenCounter(expertModel);
+      const inputTokens = tokenCounter.countMessageTokens(messages as any);
+      const client = this.getClientForModel(expertModel);
+      
+      console.log(`DEBUG: Using expert model: ${expertModel}`);
+      
+      // [Rest of implementation follows same pattern as original chat method]
+      // Use the same logic but with expertModel instead of targetModel
+      
+      const requestBody: any = {
+        model: expertModel,
+        messages,
+        temperature: sessionManager.getTemperature(),
+        max_completion_tokens: 4000,
+        top_p: 0.95,
+      };
+
+      if (tools && tools.length > 0) {
+        requestBody.tools = tools;
+        requestBody.tool_choice = 'auto';
+      }
+
+      const response = await (client as any).chat.completions.create(requestBody);
+
+      // Extract usage and calculate metrics (same as original)
+      const outputTokens = response.usage?.completion_tokens || 0;
+      const totalTokens = response.usage?.total_tokens || inputTokens + outputTokens;
+      const duration = Date.now() - startTime;
+
+      return {
+        choices: response.choices.map(choice => ({
+          message: {
+            role: choice.message.role,
+            content: choice.message.content,
+            tool_calls: choice.message.tool_calls,
+          },
+          finish_reason: choice.finish_reason || 'stop',
+        })),
+        usage: {
+          prompt_tokens: inputTokens,
+          completion_tokens: outputTokens,
+          total_tokens: totalTokens,
+        },
+        metrics: {
+          prefillTimeMs: duration,
+          decodeTimeMs: duration,
+          outputTokens,
+          tokensPerSecond: outputTokens / (duration / 1000),
+        },
+      };
+
+    } catch (error: any) {
+      console.error(`Expert model ${expertModel} request failed:`, error.message);
+      throw error;
+    }
+  }
+
+  async *chatStreamWithExpert(
+    messages: GrokMessage[],
+    tools: GrokTool[] = [],
+    expertModel: string
+  ): AsyncGenerator<any, void, unknown> {
+    const startTime = Date.now();
+    let accumulatedContent = '';
+    let firstTokenTime: number | null = null;
+    
+    try {
+      if (!expertModel) {
+        throw new Error('Expert model not specified');
+      }
+      
+      const tokenCounter = this.getCachedTokenCounter(expertModel);
+      const inputTokens = tokenCounter.countMessageTokens(messages as any);
+      const client = this.getClientForModel(expertModel);
+      
+      console.log(`DEBUG: Streaming with expert model: ${expertModel}`);
+      
+      // [Same streaming logic as original but with expertModel]
+      const requestBody: any = {
+        model: expertModel,
+        messages,
+        temperature: sessionManager.getTemperature(),
+        max_completion_tokens: 4000,
+        top_p: 0.95,
+        stream: true,
+      };
+
+      if (tools && tools.length > 0) {
+        requestBody.tools = tools;
+        requestBody.tool_choice = 'auto';
+      }
+
+      const stream = await (client as any).chat.completions.create(requestBody);
+
+      for await (const chunk of stream) {
+        if (chunk.choices?.[0]?.delta?.content) {
+          if (firstTokenTime === null) {
+            firstTokenTime = Date.now();
+          }
+          accumulatedContent += chunk.choices[0].delta.content;
+        }
+        yield chunk;
+      }
+
+      // Calculate final metrics
+      const totalTime = Date.now() - startTime;
+      const prefillTime = firstTokenTime ? firstTokenTime - startTime : totalTime;
+      const decodeTime = firstTokenTime ? totalTime - (firstTokenTime - startTime) : 0;
+      const outputTokens = tokenCounter.estimateStreamingTokens(accumulatedContent);
+
+      this.lastStreamingMetrics = {
+        prefillTimeMs: prefillTime,
+        decodeTimeMs: decodeTime,
+        outputTokens,
+        tokensPerSecond: outputTokens / (decodeTime / 1000 || 1),
+      };
+
+    } catch (error: any) {
+      console.error(`Expert model ${expertModel} streaming failed:`, error.message);
+      throw error;
+    }
   }
 
   async chat(
@@ -634,7 +794,6 @@ export class GigaClient {
       const decodeTime = firstTokenTime ? endTime - firstTokenTime : durationMs - prefillTime;
       const decodeTokensPerSecond = decodeTime > 0 ? outputTokens / (decodeTime / 1000) : 0;
       
-      console.log(`\x1b[34mprefill - ${prefillTime}ms\x1b[0m | \x1b[33mdecode - ${Math.round(decodeTokensPerSecond)} toks/sec (${outputTokens} out / ${decodeTime}ms)\x1b[0m`);
       this.lastStreamingMetrics = {
         prefillTimeMs: prefillTime,
         decodeTimeMs: decodeTime,

@@ -10,6 +10,8 @@ import { loadApiKeys } from "../utils/api-keys";
 import { McpManager } from "../mcp/mcp-manager";
 import { sessionManager } from "../utils/session-manager";
 import { expertModelsManager, ExpertModelsConfig } from "../utils/expert-models-manager";
+import { expertRouter, ExpertType } from "../utils/expert-router";
+import { ExpertPrompts } from "../utils/expert-prompts";
 import { modeManager } from "../utils/mode-manager";
 import { AgentMode } from "../types";
 import { ModelInfo } from "../utils/dynamic-model-fetcher";
@@ -55,6 +57,8 @@ export class GigaAgent extends EventEmitter {
   private abortController: AbortController | null = null;
   private selectedCustomPrompt: string | null = null;
   private lastBashOutput: string | null = null;
+  private originalSystemPrompt: string = '';
+  private currentExpertType: ExpertType | null = null;
   private async getBaseSystemPrompt(): Promise<string> {
     const directoryStructure = await this.getDirectoryStructure();
     const directoryContents = await this.getDirectoryContents();
@@ -109,8 +113,19 @@ Directory contents: ${directoryContents}
     const cerebrasKey = savedKeys.cerebrasApiKey || process.env.CEREBRAS_API_KEY;
     const openaiKey = savedKeys.openaiApiKey || process.env.OPENAI_API_KEY;
     
-    if (!xaiKey) {
-      throw new Error('XAI API key is required. Please configure it in /providers or set XAI_API_KEY environment variable.');
+    // Check if any API key is available
+    const hasAnyApiKey = xaiKey || groqKey || anthropicKey || openRouterKey || googleKey || cerebrasKey || openaiKey;
+    
+    if (!hasAnyApiKey) {
+      throw new Error('No API keys found. Please set one of the following environment variables in your shell configuration (e.g., ~/.zshrc or ~/.bashrc):\n' +
+        '  - XAI_API_KEY (for Grok models)\n' +
+        '  - GROQ_API_KEY (for Groq models)\n' +
+        '  - ANTHROPIC_API_KEY or CLAUDE_API_KEY (for Claude models)\n' +
+        '  - OPENROUTER_API_KEY (for OpenRouter models)\n' +
+        '  - GOOGLE_API_KEY (for Gemini models)\n' +
+        '  - CEREBRAS_API_KEY (for Cerebras models)\n' +
+        '  - OPENAI_API_KEY (for OpenAI models)\n\n' +
+        'After setting an API key, source your shell configuration file (e.g., source ~/.zshrc) and try again.');
     }
     
     this.gigaClient = new GigaClient(
@@ -139,6 +154,9 @@ Directory contents: ${directoryContents}
 
     // Attempt to migrate expert models config from sessions if needed
     expertModelsManager.migrateFromAllSessions();
+
+    // Initialize expert router with this client
+    expertRouter.setGigaClient(this.gigaClient);
 
     // Initialize with system message
     this.updateSystemPrompt().catch(console.error);
@@ -184,11 +202,16 @@ Directory contents: ${directoryContents}
     let toolRounds = 0;
 
     try {
-      // For initial response, always use the main model - expert routing happens at tool level
-      let currentResponse = await this.gigaClient.chat(
-        this.messages,
-        getAllTools()
-      );
+      // Route to appropriate expert model
+      const expertRoute = await this.routeToExpert(message);
+      
+      // Apply expert specialization
+      await this.applyExpertSpecialization(expertRoute.expertType);
+
+      // Use expert model for initial response
+      let currentResponse = expertRoute.model !== this.getCurrentModel()
+        ? await this.gigaClient.chatWithExpert(this.messages, getAllTools(), expertRoute.model)
+        : await this.gigaClient.chat(this.messages, getAllTools());
 
       // Agent loop - continue until no more tool calls or max rounds reached
       while (toolRounds < maxToolRounds) {
@@ -254,12 +277,10 @@ Directory contents: ${directoryContents}
             });
           }
 
-          // Get next response - this might contain more tool calls
-          // Use the main model for coordinating between tools
-          currentResponse = await this.gigaClient.chat(
-            this.messages,
-            getAllTools()
-          );
+          // Get next response - continue using expert model for consistency
+          currentResponse = expertRoute.model !== this.getCurrentModel()
+            ? await this.gigaClient.chatWithExpert(this.messages, getAllTools(), expertRoute.model)
+            : await this.gigaClient.chat(this.messages, getAllTools());
         } else {
           // No more tool calls, add final response
           const finalEntry: ChatEntry = {
@@ -300,6 +321,9 @@ Directory contents: ${directoryContents}
       };
       this.chatHistory.push(errorEntry);
       return [userEntry, errorEntry];
+    } finally {
+      // Restore original prompt
+      this.restoreOriginalPrompt();
     }
   }
 
@@ -365,8 +389,19 @@ Directory contents: ${directoryContents}
     const maxToolRounds = 30; // Prevent infinite loops
     let toolRounds = 0;
     let totalOutputTokens = 0;
+    
+    // Declare variables for cleanup
+    let expertRoute: { model: string; expertType: ExpertType | null } | null = null;
+    let originalModel: string | null = null;
 
     try {
+      // Route to appropriate expert before starting conversation
+      expertRoute = await this.routeToExpert(message);
+      originalModel = this.getCurrentModel();
+      
+      // Apply expert specialization to system prompt (no model switching yet)
+      await this.applyExpertSpecialization(expertRoute.expertType);
+
       // Agent loop - continue until no more tool calls or max rounds reached
       while (toolRounds < maxToolRounds) {
         // Check if operation was cancelled
@@ -379,9 +414,10 @@ Directory contents: ${directoryContents}
           return;
         }
 
-        // Stream response and accumulate
-        // Use the main model for conversation flow - expert routing happens at tool level
-        const stream = this.gigaClient.chatStream(this.messages, getAllTools());
+        // Stream response using expert model and specialized prompt
+        const stream = expertRoute.model !== originalModel 
+          ? this.gigaClient.chatStreamWithExpert(this.messages, getAllTools(), expertRoute.model)
+          : this.gigaClient.chatStream(this.messages, getAllTools());
         let accumulatedMessage: any = {};
         let accumulatedContent = "";
         let toolCallsYielded = false;
@@ -570,52 +606,100 @@ Directory contents: ${directoryContents}
     } finally {
       // Clean up abort controller
       this.abortController = null;
+      
+      // Restore original prompt (no need to restore model since we don't change session model)
+      this.restoreOriginalPrompt();
+    }
+  }
+
+  private async routeToExpert(userInput: string): Promise<{ model: string; expertType: ExpertType | null }> {
+    const expertConfig = expertModelsManager.getExpertModelsConfig();
+    
+    // Check if experts enabled and mode allows it
+    if (!expertConfig.enabled || !modeManager.shouldAllowExpertModels()) {
+      return { model: this.getCurrentModel(), expertType: null };
+    }
+
+    try {
+      // Get routing decision
+      const decision = await expertRouter.routeRequest(userInput, this.chatHistory);
+      
+      // Map expert type to configured model
+      let expertModel: string | null = null;
+      switch (decision.expertType) {
+        case 'fast': expertModel = expertConfig.fastModel; break;
+        case 'code': expertModel = expertConfig.codeModel; break;
+        case 'reasoning': expertModel = expertConfig.reasoningModel; break;
+        case 'tools': expertModel = expertConfig.toolsModel; break;
+      }
+
+      // Use expert model if available, otherwise fallback to main model
+      return { 
+        model: expertModel || this.getCurrentModel(), 
+        expertType: decision.expertType 
+      };
+
+    } catch (error) {
+      console.warn('Expert routing failed, using main model:', error);
+      return { model: this.getCurrentModel(), expertType: null };
+    }
+  }
+
+  private async applyExpertSpecialization(expertType: ExpertType | null): Promise<void> {
+    if (!expertType) {
+      return; // No expert specialization needed
+    }
+
+    try {
+      // Store original system prompt if not already stored
+      if (!this.originalSystemPrompt && this.messages.length > 0 && this.messages[0].role === 'system') {
+        const systemMessage = this.messages[0];
+        this.originalSystemPrompt = typeof systemMessage.content === 'string' 
+          ? systemMessage.content 
+          : Array.isArray(systemMessage.content) 
+            ? systemMessage.content.map((c: any) => c.text || '').join('\n')
+            : String(systemMessage.content);
+      }
+
+      // Apply expert-specific system prompt
+      const expertPrompt = ExpertPrompts.getExpertSystemPrompt(expertType, this.originalSystemPrompt);
+      
+      if (this.messages.length > 0 && this.messages[0].role === 'system') {
+        this.messages[0].content = expertPrompt;
+      } else {
+        this.messages.unshift({ role: 'system', content: expertPrompt });
+      }
+
+      this.currentExpertType = expertType;
+
+    } catch (error) {
+      console.warn('Failed to apply expert specialization:', error);
+    }
+  }
+
+  private restoreOriginalPrompt(): void {
+    if (this.originalSystemPrompt && this.messages.length > 0 && this.messages[0].role === 'system') {
+      this.messages[0].content = this.originalSystemPrompt;
+      this.currentExpertType = null;
     }
   }
 
   private getExpertModelForTool(toolName: string): string | null {
-    const expertConfig = expertModelsManager.getExpertModelsConfig();
-    
-    // Check if current mode allows expert models
-    if (!modeManager.shouldAllowExpertModels() || !expertConfig.enabled) {
+    // This method is now mainly for logging/debugging
+    // The actual routing is done at the conversation level
+    if (!this.currentExpertType) {
       return null;
     }
 
-    // Fast operations (file navigation, simple commands)
-    const fastTools = [
-      'view_file',
-      'bash'  // Only simple bash commands - complex ones should use reasoning
-    ];
-
-    // Code-specific operations
-    const codeTools = [
-      'str_replace_editor',
-      'create_file'
-    ];
-
-    // Reasoning-heavy operations  
-    const reasoningTools = [
-      'create_todo_list',
-      'update_todo_list'
-    ];
-
-    // Tool orchestration and complex workflows
-    const toolsTools = [
-      'list_mcp_tools',
-      'call_mcp_tool'
-    ];
-
-    if (fastTools.includes(toolName)) {
-      return expertConfig.fastModel;
-    } else if (codeTools.includes(toolName)) {
-      return expertConfig.codeModel;
-    } else if (reasoningTools.includes(toolName)) {
-      return expertConfig.reasoningModel;
-    } else if (toolsTools.includes(toolName) || toolName.startsWith('mcp_')) {
-      return expertConfig.toolsModel;
+    const expertConfig = expertModelsManager.getExpertModelsConfig();
+    
+    switch (this.currentExpertType) {
+      case 'fast': return expertConfig.fastModel;
+      case 'code': return expertConfig.codeModel;
+      case 'reasoning': return expertConfig.reasoningModel;
+      case 'tools': return expertConfig.toolsModel;
+      default: return null;
     }
-
-    return null;
   }
 
   private async executeTool(toolCall: GrokToolCall): Promise<ToolResult> {

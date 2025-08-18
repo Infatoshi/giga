@@ -1,6 +1,6 @@
 {
   "name": "giga-code",
-  "version": "1.0.4",
+  "version": "1.0.7",
   "description": "A personal AI CLI assistant powered by Grok for local development.",
   "main": "dist/index.js",
   "bin": {
@@ -38,7 +38,8 @@
     "ink": "^3.2.0",
     "ink-markdown": "^1.0.4",
     "openai": "^4.0.0",
-    "react": "^17.0.2"
+    "react": "^17.0.2",
+    "tiktoken": "^1.0.15"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.2",

@@ -33,7 +33,7 @@ function hasAnyApiKey(): boolean {
 program
   .name("giga")
   .description(
-    "A conversational AI CLI tool powered by Grok-3 with text editor capabilities"
+    "what an absolute gigachad"
   )
   .version("1.0.0")
   .option("-p, --prompt <prompt>", "run a single prompt in headless mode")

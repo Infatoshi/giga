@@ -11,6 +11,7 @@ import { OpenRouterProvider, isOpenRouterModel } from "../utils/openrouter-provi
 import { setOpenRouterProvider, getOpenRouterProvider } from "../utils/added-models";
 import { sessionManager } from "../utils/session-manager";
 import { modeManager } from "../utils/mode-manager";
+import { expertRouter } from "../utils/expert-router";
 import { AgentMode } from "../types";
 
 // Helper function to get OpenRouter models consistently
@@ -451,7 +452,7 @@ Built-in Commands:
   /add-mcp      - Add MCP server
   /delete-mcp   - Delete MCP server
   /sampling     - Adjust sampling temperature
-  /experts      - Configure expert model routing
+  /experts      - Configure expert model routing  
   /providers    - Configure API keys
   /exa          - Set your EXA API key for search
   /exit         - Exit application
